@@ -6,7 +6,7 @@ LLM（Claude API）を用いた FX 自動売買システム。
 OANDA v20 API を介してデイトレ・スイングトレードを行う。
 
 - **ブローカー**: OANDA
-- **AI エンジン**: Claude API (claude-sonnet-4-6)
+- **AI エンジン**: Claude API ハイブリッド型（Haiku / Sonnet 自動切替）
 - **実行環境**: GCP (Cloud Run + Cloud Scheduler)
 - **対象スタイル**: デイトレ（15分〜1時間足）、スイング（4時間〜日足）
 - **対象ペア**: USD/JPY、EUR/USD（拡張可能）
@@ -109,7 +109,36 @@ fxautobuy/
 - close_position(trade_id)               # ポジションクローズ
 ```
 
-### 4.2 ai/analyzer.py
+### 4.2 ai/model_selector.py（ハイブリッド切替ロジック）
+
+```python
+# Sonnet を使う条件（それ以外は Haiku）
+def select_model(context) -> str:
+    # 1. 重要経済指標の前後2時間
+    if has_high_impact_event_soon(context["economic_events"], hours=2):
+        return "claude-sonnet-4-6"
+
+    # 2. 高ボラティリティ（ATRが平均の1.5倍超）
+    if context["technical"]["atr14"] > context["atr_avg"] * 1.5:
+        return "claude-sonnet-4-6"
+
+    # 3. Haikuで一次判断 → confidenceが境界値なら再判断
+    #    (analyzer.py側でフォールバック処理)
+
+    return "claude-haiku-4-5-20251001"
+```
+
+**月額コスト目安**
+
+| ケース | Haiku | Sonnet | 合計/月 |
+|--------|-------|--------|---------|
+| 通常時 (80/20) | ~$3 | ~$9 | **~$12（≒1,800円）** |
+| 全部Haiku | ~$4 | - | **~$4（≒600円）** |
+| 全部Sonnet | - | ~$47 | **~$47（≒7,000円）** |
+
+---
+
+### 4.3 ai/analyzer.py
 
 ```python
 # Claude に渡すコンテキスト構造
@@ -143,7 +172,24 @@ fxautobuy/
 }
 ```
 
-### 4.3 trading/risk.py
+### 4.4 ai/fallback.py（Confidence フォールバック）
+
+```python
+# Haiku の confidence が境界値（0.60〜0.75）ならSonnetで再判断
+async def analyze_with_fallback(context) -> Signal:
+    model = select_model(context)
+    result = await call_claude(model, context)
+
+    if model == "claude-haiku-4-5-20251001" and 0.60 <= result.confidence <= 0.75:
+        result = await call_claude("claude-sonnet-4-6", context)
+        result.meta["fallback_used"] = True
+
+    return result
+```
+
+---
+
+### 4.5 trading/risk.py
 
 ```python
 # リスク管理ロジック
@@ -155,7 +201,7 @@ fxautobuy/
     # 最大同時ポジション数チェック
 ```
 
-### 4.4 db/repository.py (Firestore スキーマ)
+### 4.6 db/repository.py (Firestore スキーマ)
 
 ```
 signals/{signal_id}
@@ -209,6 +255,12 @@ RISK_PCT        = 2.0        # 1トレードあたり資金の2%リスク
 MAX_DAILY_LOSS  = 10000      # 日次最大損失（円）
 MAX_POSITIONS   = 3          # 最大同時ポジション数
 CONFIDENCE_THRESHOLD = 0.70  # AIシグナルの採用閾値
+
+# ハイブリッドモデル設定
+PRIMARY_MODEL   = "claude-haiku-4-5-20251001"   # 通常時
+FALLBACK_MODEL  = "claude-sonnet-4-6"           # 重要局面
+FALLBACK_CONFIDENCE_MIN = 0.60  # これ以下のconfidenceでSonnetに切替
+FALLBACK_CONFIDENCE_MAX = 0.75  # これ以上なら確信あり→Haikuのまま
 TRADE_GRANULARITY = "H1"     # メイン足（H1=1時間足）
 EXECUTION_INTERVAL = 15      # 実行間隔（分）
 
