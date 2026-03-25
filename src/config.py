@@ -11,12 +11,14 @@ OANDA_API_KEY     = os.getenv("OANDA_API_KEY", "")
 OANDA_ACCOUNT_ID  = os.getenv("OANDA_ACCOUNT_ID", "")
 OANDA_ENVIRONMENT = os.getenv("OANDA_ENVIRONMENT", "practice")  # practice | live
 
-# --- Claude API ---
-ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+# --- AI プロバイダー ---
+AI_PROVIDER   = os.getenv("AI_PROVIDER", "groq")   # groq | claude
+GROQ_API_KEY  = os.getenv("GROQ_API_KEY", "")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
-# --- ハイブリッドモデル設定 ---
-PRIMARY_MODEL  = "claude-haiku-4-5-20251001"  # 通常時
-FALLBACK_MODEL = "claude-sonnet-4-6"          # 重要局面・境界値時
+# --- ハイブリッドモデル設定（Groq） ---
+PRIMARY_MODEL  = "llama-3.1-8b-instant"       # 通常時（高速・軽量）
+FALLBACK_MODEL = "llama-3.3-70b-versatile"    # 重要局面・境界値時
 
 CONFIDENCE_THRESHOLD    = 0.70  # シグナル採用の最低閾値
 FALLBACK_CONF_MIN       = 0.60  # これ以下は HOLD 扱い
