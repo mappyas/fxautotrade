@@ -1,7 +1,7 @@
 """OANDA v20 API ラッパー"""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -61,6 +61,8 @@ class OrderResult:
 
 
 class OandaClient:
+    """OANDA v20 REST API ブローカークライアント"""
+
     def __init__(self) -> None:
         self._client = oandapyV20.API(
             access_token=OANDA_API_KEY,

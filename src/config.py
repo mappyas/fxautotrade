@@ -3,9 +3,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# --- データソース ---
+DATA_SOURCE = os.getenv("DATA_SOURCE", "yfinance")  # yfinance | oanda
+
 # --- OANDA ---
-OANDA_API_KEY     = os.environ["OANDA_API_KEY"]
-OANDA_ACCOUNT_ID  = os.environ["OANDA_ACCOUNT_ID"]
+OANDA_API_KEY     = os.getenv("OANDA_API_KEY", "")
+OANDA_ACCOUNT_ID  = os.getenv("OANDA_ACCOUNT_ID", "")
 OANDA_ENVIRONMENT = os.getenv("OANDA_ENVIRONMENT", "practice")  # practice | live
 
 # --- Claude API ---
