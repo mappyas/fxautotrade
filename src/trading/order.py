@@ -60,8 +60,11 @@ def execute(
 
     sl_price, tp_price = _calc_sl_tp(signal.action, current_price, sl_pips, tp_pips, pair)
 
+    # USDJPYレート取得（非JPYペアのポジションサイズ換算用）
+    usdjpy_rate = _get_usdjpy_rate(client, pair, current_price)
+
     # ポジションサイズ計算
-    units = calc_position_size(account.balance, RISK_PCT, sl_pips, pair, current_price)
+    units = calc_position_size(account.balance, RISK_PCT, sl_pips, pair, usdjpy_rate)
     if signal.action == "SELL":
         units = -units
 
@@ -85,6 +88,17 @@ def execute(
 # ------------------------------------------------------------------
 # SL / TP 価格計算
 # ------------------------------------------------------------------
+
+def _get_usdjpy_rate(client, pair: str, current_price: float) -> float:
+    """USD/JPYレートを取得する。JPYクロスの場合は不要なので150.0を返す"""
+    if pair.endswith("JPY"):
+        return 150.0  # JPYクロスは使わないので任意の値
+    try:
+        candles = client.get_candles("USD_JPY", "H1", 1)
+        return candles[-1].close if candles else 150.0
+    except Exception:
+        return 150.0  # 取得失敗時はデフォルト値
+
 
 def _calc_sl_tp(
     action: str,

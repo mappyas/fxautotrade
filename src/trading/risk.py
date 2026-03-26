@@ -28,17 +28,15 @@ def calc_position_size(
     risk_pct: float,
     sl_pips: int,
     pair: str,
-    current_price: float = 1.0,
+    usdjpy_rate: float = 150.0,
 ) -> int:
     """
     1トレードあたりのユニット数を計算する。
 
     計算式:
-      リスク金額 = 残高 × (risk_pct / 100)
-      ユニット数 = リスク金額 / (SL_pips × pip値)
-
-    JPYクロス（USD_JPY等）はそのままJPY計算。
-    USD建てペア（EUR_USD等）はcurrent_priceでJPY換算。
+      リスク金額 = 残高(JPY) × (risk_pct / 100)
+      pip値(JPY) = JPYクロス: pip_size / USD建て: pip_size × USDJPY
+      ユニット数 = リスク金額 / (SL_pips × pip値(JPY))
     """
     if sl_pips <= 0:
         return 0
@@ -46,8 +44,8 @@ def calc_position_size(
     pip_size = _PIP_SIZE.get(pair, 0.01)
     risk_amount = balance * (risk_pct / 100)
 
-    # USD建てペアは現在レートでJPYに換算（簡易: USDJPY≈150と仮定）
-    pip_value_jpy = pip_size if pair.endswith("JPY") else pip_size * current_price
+    # JPYクロスはそのまま、USD建てはUSDJPYレートでJPY換算
+    pip_value_jpy = pip_size if pair.endswith("JPY") else pip_size * usdjpy_rate
 
     units = risk_amount / (sl_pips * pip_value_jpy)
     # 1000単位に切り捨て（最小ロット）
