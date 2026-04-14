@@ -348,6 +348,11 @@ def run_analysis(client, pairs: list[str]) -> dict:
     return results
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _fetch_candles(p: str) -> list:
+    return get_data_client().get_candles(p, "H1", 48)
+
+
 # ------------------------------------------------------------------
 # メイン
 # ------------------------------------------------------------------
@@ -437,10 +442,6 @@ def main() -> None:
         for tab, pair in zip(tabs, selected_pairs):
             with tab:
                 pair_result = results.get(pair)
-
-                @st.cache_data(ttl=60, show_spinner=False)
-                def _fetch_candles(p: str) -> list:
-                    return get_data_client().get_candles(p, "H1", 48)
 
                 h1 = (
                     pair_result["candles"].get("H1", [])

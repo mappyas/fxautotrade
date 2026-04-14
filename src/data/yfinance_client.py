@@ -1,14 +1,37 @@
 """yfinance を使ったデータクライアント（開発・テスト用）"""
 from __future__ import annotations
 
+import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
 import yfinance as yf
 
+logger = logging.getLogger(__name__)
+
 from src.data.base_client import BaseDataClient
 from src.data.oanda_client import AccountSummary, Candle, OrderResult, Position
+
+def _download_with_retry(ticker: str, period: str, interval: str, retries: int = 3) -> "pd.DataFrame":
+    import pandas as pd
+    for attempt in range(retries):
+        try:
+            df = yf.download(ticker, period=period, interval=interval, progress=False)
+            if not df.empty:
+                return df
+            # 空データは少し待ってリトライ
+            if attempt < retries - 1:
+                time.sleep(2 ** attempt)
+        except Exception as e:
+            logger.warning("yfinance download 失敗 (%s, attempt %d/%d): %s", ticker, attempt + 1, retries, e)
+            if attempt < retries - 1:
+                time.sleep(2 ** attempt)
+            else:
+                raise
+    return pd.DataFrame()
+
 
 # OANDA形式 → yfinance ティッカー変換
 _PAIR_MAP: dict[str, str] = {
@@ -82,7 +105,7 @@ class YFinanceClient(BaseDataClient):
             raise ValueError(f"未対応の粒度: {granularity}")
 
         period = _MAX_PERIOD[interval]
-        df = yf.download(ticker, period=period, interval=interval, progress=False)
+        df = _download_with_retry(ticker, period=period, interval=interval)
 
         if df.empty:
             return []
