@@ -329,11 +329,26 @@ def run_analysis(client, pairs: list[str]) -> dict:
             result = execute(client, signal, pair, daily_pnl=0.0)
             results[pair] = {"candles": candles, "signal": signal, "result": result}
 
+            current_price = candles["H1"][-1].close if candles.get("H1") else 0.0
+            if signal.action in ("BUY", "SELL"):
+                sl_price, tp_price = calc_sl_tp_prices(
+                    signal.action, current_price,
+                    signal.suggested_sl_pips, signal.suggested_tp_pips,
+                    pair,
+                )
+            else:
+                sl_price, tp_price = None, None
+
             append_log({
                 "timestamp":   now_jst().strftime("%Y-%m-%d %H:%M JST"),
                 "pair":        pair,
                 "action":      signal.action,
                 "confidence":  round(signal.confidence, 4),
+                "entry":       round(current_price, 5),
+                "sl":          round(sl_price, 5) if sl_price else None,
+                "tp":          round(tp_price, 5) if tp_price else None,
+                "sl_pips":     signal.suggested_sl_pips,
+                "tp_pips":     signal.suggested_tp_pips,
                 "reasoning":   signal.reasoning,
                 "model":       signal.model_used,
                 "fallback":    signal.fallback_used,
@@ -508,7 +523,7 @@ def main() -> None:
     if log:
         df = pd.DataFrame(list(reversed(log[-100:])))
 
-        display_cols = ["timestamp", "pair", "action", "confidence", "reasoning", "executed", "paper"]
+        display_cols = ["timestamp", "pair", "action", "confidence", "entry", "sl", "tp", "sl_pips", "tp_pips", "reasoning", "executed", "paper"]
         existing = [c for c in display_cols if c in df.columns]
         df = df[existing].copy()
         df["confidence"] = df["confidence"].apply(lambda x: f"{float(x):.0%}")
@@ -517,6 +532,11 @@ def main() -> None:
             "pair":       "ペア",
             "action":     "シグナル",
             "confidence": "信頼度",
+            "entry":      "エントリー",
+            "sl":         "SL価格",
+            "tp":         "TP価格",
+            "sl_pips":    "SL(pips)",
+            "tp_pips":    "TP(pips)",
             "reasoning":  "判断理由",
             "executed":   "実行",
             "paper":      "PAPER",
