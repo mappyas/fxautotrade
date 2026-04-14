@@ -3,6 +3,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Streamlit Community Cloud 上では st.secrets を環境変数にマージする
+try:
+    import streamlit as st
+    for _k, _v in st.secrets.items():
+        if isinstance(_v, str):
+            os.environ.setdefault(_k.upper(), _v)
+except Exception:
+    pass
+
 # --- データソース ---
 DATA_SOURCE = os.getenv("DATA_SOURCE", "yfinance")  # yfinance | oanda
 
@@ -12,13 +21,18 @@ OANDA_ACCOUNT_ID  = os.getenv("OANDA_ACCOUNT_ID", "")
 OANDA_ENVIRONMENT = os.getenv("OANDA_ENVIRONMENT", "practice")  # practice | live
 
 # --- AI プロバイダー ---
-AI_PROVIDER   = os.getenv("AI_PROVIDER", "groq")   # groq | claude
-GROQ_API_KEY  = os.getenv("GROQ_API_KEY", "")
+AI_PROVIDER       = os.getenv("AI_PROVIDER", "groq")   # groq | claude | gemini
+GROQ_API_KEY      = os.getenv("GROQ_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+GEMINI_API_KEY    = os.getenv("GEMINI_API_KEY", "")
 
-# --- ハイブリッドモデル設定（Groq） ---
-PRIMARY_MODEL  = "llama-3.1-8b-instant"       # 通常時（高速・軽量）
-FALLBACK_MODEL = "llama-3.3-70b-versatile"    # 重要局面・境界値時
+# --- ハイブリッドモデル設定 ---
+_MODELS = {
+    "groq":   ("llama-3.1-8b-instant",       "llama-3.3-70b-versatile"),
+    "claude": ("claude-haiku-4-5-20251001",   "claude-sonnet-4-6"),
+    "gemini": ("gemini-2.5-flash",            "gemini-2.5-flash"),
+}
+PRIMARY_MODEL, FALLBACK_MODEL = _MODELS.get(AI_PROVIDER, _MODELS["groq"])
 
 CONFIDENCE_THRESHOLD    = 0.70  # シグナル採用の最低閾値
 FALLBACK_CONF_MIN       = 0.60  # これ以下は HOLD 扱い

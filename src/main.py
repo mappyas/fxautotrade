@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 from datetime import datetime, timezone
 
 from src.config import CANDLE_COUNTS, PAIRS, PAPER_TRADE
@@ -32,7 +33,9 @@ def run(daily_pnl: float = 0.0) -> None:
     account = client.get_account_summary()
     logger.info("口座残高: %.0f %s | NAV: %.0f", account.balance, account.currency, account.nav)
 
-    for pair in PAIRS:
+    for i, pair in enumerate(PAIRS):
+        if i > 0:
+            time.sleep(5)  # Gemini RPM制限対策
         logger.info("-" * 40)
         logger.info("分析中: %s", pair)
 

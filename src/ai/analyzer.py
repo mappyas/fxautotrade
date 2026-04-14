@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 from src.ai.indicators import TechnicalIndicators, calc_indicators
 from src.ai.prompts import SYSTEM_PROMPT, build_user_prompt
@@ -50,8 +53,11 @@ def analyze(
 
     # Confidence が境界値ならフォールバックモデルで再判断
     if model == PRIMARY_MODEL and FALLBACK_CONF_MIN <= signal.confidence <= FALLBACK_CONF_MAX:
-        signal = _call_llm(FALLBACK_MODEL, pair, candles_h1, candles_h4, candles_d, indicators, open_positions, economic_events, news)
-        signal.fallback_used = True
+        try:
+            signal = _call_llm(FALLBACK_MODEL, pair, candles_h1, candles_h4, candles_d, indicators, open_positions, economic_events, news)
+            signal.fallback_used = True
+        except Exception as e:
+            logger.warning("フォールバックモデル失敗（レート制限等）、プライマリ結果を使用: %s", e)
 
     return signal
 
@@ -95,6 +101,8 @@ def _call_llm(
         content = _call_groq(model, user_prompt)
     elif AI_PROVIDER == "claude":
         content = _call_claude(model, user_prompt)
+    elif AI_PROVIDER == "gemini":
+        content = _call_gemini(model, user_prompt)
     else:
         raise ValueError(f"未対応の AI_PROVIDER: {AI_PROVIDER}")
 
@@ -104,18 +112,39 @@ def _call_llm(
 
 
 def _call_groq(model: str, user_prompt: str) -> str:
-    from groq import Groq
+    from groq import Groq, RateLimitError
     client = Groq(api_key=GROQ_API_KEY)
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": user_prompt},
-        ],
-        temperature=0.2,
-        max_tokens=512,
-    )
-    return resp.choices[0].message.content
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user",   "content": user_prompt},
+            ],
+            temperature=0.2,
+            max_tokens=512,
+        )
+        return resp.choices[0].message.content
+    except RateLimitError as e:
+        logger.warning("Groqレート制限 (%s): HOLD を返します", model)
+        return '{"action":"HOLD","confidence":0.0,"timeframe":"DAY_TRADE","suggested_sl_pips":30,"suggested_tp_pips":60,"reasoning":"レート制限のためHOLD"}'
+
+
+def _call_gemini(model: str, user_prompt: str) -> str:
+    from google import genai
+    from src.config import GEMINI_API_KEY
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    try:
+        resp = client.models.generate_content(
+            model=model,
+            contents=f"{SYSTEM_PROMPT}\n\n{user_prompt}",
+        )
+        return resp.text
+    except Exception as e:
+        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+            logger.warning("Geminiレート制限 (%s): HOLD を返します", model)
+            return '{"action":"HOLD","confidence":0.0,"timeframe":"DAY_TRADE","suggested_sl_pips":30,"suggested_tp_pips":60,"reasoning":"レート制限のためHOLD"}'
+        raise
 
 
 def _call_claude(model: str, user_prompt: str) -> str:
