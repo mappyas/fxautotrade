@@ -354,6 +354,7 @@ def run_analysis(client, pairs: list[str]) -> dict:
                 "session":     session.name,
                 "recommended": session.recommended,
                 "caution":     session.caution,
+                "close_by":    f"{session.close_by_hour:02d}:00 JST" if session.close_by_hour is not None else "—",
                 "session_note": session.reason,
                 "reasoning":   signal.reasoning,
                 "model":       signal.model_used,
@@ -498,8 +499,12 @@ def main() -> None:
 
                     # セッション表示（常時）
                     cur_session = get_session(pair)
+                    close_by_str = (
+                        f"　→ **{cur_session.close_by_hour:02d}:00 JST までに決済推奨**"
+                        if cur_session.close_by_hour is not None else ""
+                    )
                     if cur_session.recommended:
-                        st.success(f"◎ {cur_session.name}セッション — {cur_session.reason}")
+                        st.success(f"◎ {cur_session.name}セッション{close_by_str}")
                     elif cur_session.caution:
                         st.warning(f"△ {cur_session.name}セッション — {cur_session.reason}")
                     else:
@@ -539,7 +544,7 @@ def main() -> None:
     if log:
         df = pd.DataFrame(list(reversed(log[-100:])))
 
-        display_cols = ["timestamp", "pair", "action", "confidence", "entry", "sl", "tp", "sl_pips", "tp_pips", "session", "recommended", "session_note", "reasoning", "executed", "paper"]
+        display_cols = ["timestamp", "pair", "action", "confidence", "entry", "sl", "tp", "sl_pips", "tp_pips", "session", "recommended", "close_by", "reasoning", "executed", "paper"]
         existing = [c for c in display_cols if c in df.columns]
         df = df[existing].copy()
         df["confidence"] = df["confidence"].apply(lambda x: f"{float(x):.0%}")
@@ -563,9 +568,9 @@ def main() -> None:
             "tp":           "TP価格",
             "sl_pips":      "SL(pips)",
             "tp_pips":      "TP(pips)",
-            "session":      "セッション",
-            "recommended":  "推奨",
-            "session_note": "セッション備考",
+            "session":     "セッション",
+            "recommended": "推奨",
+            "close_by":    "決済推奨期限",
             "reasoning":    "判断理由",
             "executed":     "実行",
             "paper":        "PAPER",

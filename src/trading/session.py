@@ -13,27 +13,28 @@ class SessionInfo:
     recommended: bool   # 取引推奨かどうか
     caution: bool       # 注意（取引はできるがボラ高）
     reason: str         # 理由
+    close_by_hour: int | None  # この時刻（JST）までに決済推奨。Noneは推奨なし
 
 
 # USD/JPY向けセッション定義（JST時間帯）
 # (start_hour_inclusive, end_hour_exclusive, SessionInfo)
 _USDJPY_SESSIONS: list[tuple[int, int, SessionInfo]] = [
-    (9,  15, SessionInfo("東京",       recommended=True,  caution=False, reason="東京時間は流動性が高く安定")),
-    (15, 18, SessionInfo("ロンドン前半", recommended=True,  caution=False, reason="ロンドン勢参入でトレンド発生しやすい")),
-    (18, 21, SessionInfo("ロンドン後半", recommended=True,  caution=False, reason="欧米時間のオーバーラップ")),
-    (21, 24, SessionInfo("NY・米指標",  recommended=False, caution=True,  reason="米経済指標・FOMC等でボラ急騰リスク")),
-    (0,   2, SessionInfo("NY後半",     recommended=False, caution=True,  reason="流動性低下と突発的な値動きに注意")),
-    (2,   9, SessionInfo("閑散",       recommended=False, caution=False, reason="流動性が低くスリッページリスク大")),
+    (9,  15, SessionInfo("東京",       recommended=True,  caution=False, reason="東京時間は流動性が高く安定",            close_by_hour=15)),
+    (15, 18, SessionInfo("ロンドン前半", recommended=True,  caution=False, reason="ロンドン勢参入でトレンド発生しやすい",  close_by_hour=21)),
+    (18, 21, SessionInfo("ロンドン後半", recommended=True,  caution=False, reason="欧米時間のオーバーラップ",             close_by_hour=21)),
+    (21, 24, SessionInfo("NY・米指標",  recommended=False, caution=True,  reason="米経済指標・FOMC等でボラ急騰リスク",   close_by_hour=None)),
+    (0,   2, SessionInfo("NY後半",     recommended=False, caution=True,  reason="流動性低下と突発的な値動きに注意",      close_by_hour=None)),
+    (2,   9, SessionInfo("閑散",       recommended=False, caution=False, reason="流動性が低くスリッページリスク大",       close_by_hour=None)),
 ]
 
 # EUR/USD向けセッション定義（JST時間帯）
 _EURUSD_SESSIONS: list[tuple[int, int, SessionInfo]] = [
-    (9,  15, SessionInfo("東京",       recommended=False, caution=False, reason="EUR/USDは東京時間は動きが少ない")),
-    (15, 18, SessionInfo("ロンドン前半", recommended=True,  caution=False, reason="ロンドン勢参入でEUR/USDが動き出す")),
-    (18, 23, SessionInfo("ロンドン/NY", recommended=True,  caution=False, reason="欧米オーバーラップで最も流動性が高い")),
-    (23, 24, SessionInfo("NY後半",     recommended=False, caution=True,  reason="流動性低下")),
-    (0,   2, SessionInfo("NY後半",     recommended=False, caution=True,  reason="流動性低下")),
-    (2,   9, SessionInfo("閑散",       recommended=False, caution=False, reason="流動性が低い")),
+    (9,  15, SessionInfo("東京",       recommended=False, caution=False, reason="EUR/USDは東京時間は動きが少ない",       close_by_hour=None)),
+    (15, 18, SessionInfo("ロンドン前半", recommended=True,  caution=False, reason="ロンドン勢参入でEUR/USDが動き出す",    close_by_hour=23)),
+    (18, 23, SessionInfo("ロンドン/NY", recommended=True,  caution=False, reason="欧米オーバーラップで最も流動性が高い",  close_by_hour=23)),
+    (23, 24, SessionInfo("NY後半",     recommended=False, caution=True,  reason="流動性低下",                          close_by_hour=None)),
+    (0,   2, SessionInfo("NY後半",     recommended=False, caution=True,  reason="流動性低下",                          close_by_hour=None)),
+    (2,   9, SessionInfo("閑散",       recommended=False, caution=False, reason="流動性が低い",                        close_by_hour=None)),
 ]
 
 _SESSION_MAP: dict[str, list[tuple[int, int, SessionInfo]]] = {
@@ -59,4 +60,4 @@ def get_session(pair: str, dt: datetime | None = None) -> SessionInfo:
             return info
 
     # フォールバック（通常はここに来ない）
-    return SessionInfo("不明", recommended=False, caution=True, reason="セッション判定不可")
+    return SessionInfo("不明", recommended=False, caution=True, reason="セッション判定不可", close_by_hour=None)
