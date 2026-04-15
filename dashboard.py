@@ -22,6 +22,7 @@ from src.ai.indicators import calc_indicators
 from src.config import CANDLE_COUNTS, PAIRS, PAPER_TRADE
 from src.data.client_factory import get_data_client
 from src.trading.order import execute
+from src.trading.session import get_session
 
 LOG_FILE = Path("data/signal_log.json")
 JST = timezone(timedelta(hours=9))
@@ -326,8 +327,9 @@ def run_analysis(client, pairs: list[str]) -> dict:
                 open_positions=positions,
             )
 
+            session = get_session(pair)
             result = execute(client, signal, pair, daily_pnl=0.0)
-            results[pair] = {"candles": candles, "signal": signal, "result": result}
+            results[pair] = {"candles": candles, "signal": signal, "result": result, "session": session}
 
             current_price = candles["H1"][-1].close if candles.get("H1") else 0.0
             if signal.action in ("BUY", "SELL"):
@@ -349,6 +351,10 @@ def run_analysis(client, pairs: list[str]) -> dict:
                 "tp":          round(tp_price, 5) if tp_price else None,
                 "sl_pips":     signal.suggested_sl_pips,
                 "tp_pips":     signal.suggested_tp_pips,
+                "session":     session.name,
+                "recommended": session.recommended,
+                "caution":     session.caution,
+                "session_note": session.reason,
                 "reasoning":   signal.reasoning,
                 "model":       signal.model_used,
                 "fallback":    signal.fallback_used,
@@ -489,6 +495,16 @@ def main() -> None:
 
                 with col_signal:
                     st.subheader("最新シグナル")
+
+                    # セッション表示（常時）
+                    cur_session = get_session(pair)
+                    if cur_session.recommended:
+                        st.success(f"◎ {cur_session.name}セッション — {cur_session.reason}")
+                    elif cur_session.caution:
+                        st.warning(f"△ {cur_session.name}セッション — {cur_session.reason}")
+                    else:
+                        st.error(f"✕ {cur_session.name}セッション — {cur_session.reason}")
+
                     if pair_result:
                         signal = pair_result["signal"]
                         result = pair_result["result"]
@@ -523,23 +539,36 @@ def main() -> None:
     if log:
         df = pd.DataFrame(list(reversed(log[-100:])))
 
-        display_cols = ["timestamp", "pair", "action", "confidence", "entry", "sl", "tp", "sl_pips", "tp_pips", "reasoning", "executed", "paper"]
+        display_cols = ["timestamp", "pair", "action", "confidence", "entry", "sl", "tp", "sl_pips", "tp_pips", "session", "recommended", "session_note", "reasoning", "executed", "paper"]
         existing = [c for c in display_cols if c in df.columns]
         df = df[existing].copy()
         df["confidence"] = df["confidence"].apply(lambda x: f"{float(x):.0%}")
+        if "recommended" in df.columns and "caution" in df.columns:
+            def _rec_label(row):
+                if row.get("recommended"):
+                    return "◎ 推奨"
+                elif row.get("caution"):
+                    return "△ 注意"
+                else:
+                    return "✕ 非推奨"
+            df["recommended"] = df.apply(_rec_label, axis=1)
+            df = df.drop(columns=["caution"], errors="ignore")
         df = df.rename(columns={
-            "timestamp":  "時刻 (JST)",
-            "pair":       "ペア",
-            "action":     "シグナル",
-            "confidence": "信頼度",
-            "entry":      "エントリー",
-            "sl":         "SL価格",
-            "tp":         "TP価格",
-            "sl_pips":    "SL(pips)",
-            "tp_pips":    "TP(pips)",
-            "reasoning":  "判断理由",
-            "executed":   "実行",
-            "paper":      "PAPER",
+            "timestamp":    "時刻 (JST)",
+            "pair":         "ペア",
+            "action":       "シグナル",
+            "confidence":   "信頼度",
+            "entry":        "エントリー",
+            "sl":           "SL価格",
+            "tp":           "TP価格",
+            "sl_pips":      "SL(pips)",
+            "tp_pips":      "TP(pips)",
+            "session":      "セッション",
+            "recommended":  "推奨",
+            "session_note": "セッション備考",
+            "reasoning":    "判断理由",
+            "executed":     "実行",
+            "paper":        "PAPER",
         })
         st.dataframe(df, use_container_width=True, hide_index=True)
 
