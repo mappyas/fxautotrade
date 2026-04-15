@@ -354,7 +354,7 @@ def run_analysis(client, pairs: list[str]) -> dict:
                 "session":     session.name,
                 "recommended": session.recommended,
                 "caution":     session.caution,
-                "close_by":    f"{session.close_by_hour:02d}:00 JST" if session.close_by_hour is not None else "—",
+                "close_by":    f"{getattr(session, 'close_by_hour', None):02d}:00 JST" if getattr(session, "close_by_hour", None) is not None else "—",
                 "session_note": session.reason,
                 "reasoning":   signal.reasoning,
                 "model":       signal.model_used,
@@ -499,9 +499,10 @@ def main() -> None:
 
                     # セッション表示（常時）
                     cur_session = get_session(pair)
+                    close_by_hour = getattr(cur_session, "close_by_hour", None)
                     close_by_str = (
-                        f"　→ **{cur_session.close_by_hour:02d}:00 JST までに決済推奨**"
-                        if cur_session.close_by_hour is not None else ""
+                        f"　→ **{close_by_hour:02d}:00 JST までに決済推奨**"
+                        if close_by_hour is not None else ""
                     )
                     if cur_session.recommended:
                         st.success(f"◎ {cur_session.name}セッション{close_by_str}")

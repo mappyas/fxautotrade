@@ -9,11 +9,11 @@ JST = timezone(timedelta(hours=9))
 
 @dataclass
 class SessionInfo:
-    name: str           # "東京" | "ロンドン" | "NY・米指標" | "NY後半" | "閑散"
-    recommended: bool   # 取引推奨かどうか
-    caution: bool       # 注意（取引はできるがボラ高）
-    reason: str         # 理由
-    close_by_hour: int | None  # この時刻（JST）までに決済推奨。Noneは推奨なし
+    name: str                      # "東京" | "ロンドン" | "NY・米指標" | "NY後半" | "閑散"
+    recommended: bool              # 取引推奨かどうか
+    caution: bool                  # 注意（取引はできるがボラ高）
+    reason: str                    # 理由
+    close_by_hour: int | None = None  # この時刻（JST）までに決済推奨。Noneは推奨なし
 
 
 # USD/JPY向けセッション定義（JST時間帯）
