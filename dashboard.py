@@ -465,6 +465,24 @@ def main() -> None:
 
     st.divider()
 
+    # ---- 経済指標カレンダー ----
+    with st.expander("経済指標カレンダー（本日〜明日）", expanded=False):
+        events = fetch_economic_events(FINNHUB_API_KEY)
+        if events:
+            impact_color = {"high": "🔴", "medium": "🟡", "low": "⚪"}
+            df_ev = pd.DataFrame(events)
+            df_ev["impact"] = df_ev["impact"].map(lambda x: f"{impact_color.get(x, '')} {x.upper()}")
+            df_ev = df_ev.rename(columns={
+                "time": "日時", "country": "国", "impact": "影響度",
+                "event": "イベント", "forecast": "予想", "actual": "結果", "prev": "前回",
+            })
+            st.dataframe(df_ev[["日時", "国", "影響度", "イベント", "予想", "結果", "前回"]],
+                         use_container_width=True, hide_index=True)
+        else:
+            st.caption("該当する経済指標はありません（または API キー未設定）")
+
+    st.divider()
+
     # ---- 分析実行 ----
     if run_btn:
         with st.spinner(""):
