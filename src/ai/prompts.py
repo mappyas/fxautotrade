@@ -23,9 +23,9 @@ SYSTEM_PROMPT = """\
 ```
 
 ## 判断基準
-- confidence 0.75以上：強いシグナル → BUY/SELL
-- confidence 0.60〜0.75：弱いシグナル → 基本HOLD
-- confidence 0.60未満：不確実 → HOLD
+- confidence 0.65以上：シグナル採用 → BUY/SELL
+- confidence 0.55〜0.65：弱いシグナル → 基本HOLD
+- confidence 0.55未満：不確実 → HOLD
 - 重要経済指標の直前直後はリスクを考慮すること
 - トレンドと逆張りする場合は confidence を下げること
 
@@ -75,9 +75,9 @@ def build_user_prompt(
         "trade_mode": trade_mode,
         "current_price": current_price,
         "candles": {
-            tf_short: fmt_candles(candles_h1, 10),
-            tf_mid:   fmt_candles(candles_h4, 8),
-            tf_long:  fmt_candles(candles_d,  5),
+            tf_short: fmt_candles(candles_h1, 20),
+            tf_mid:   fmt_candles(candles_h4, 12),
+            tf_long:  fmt_candles(candles_d,   8),
         },
         "technical": {
             "sma20":  indicators_h1.sma20,

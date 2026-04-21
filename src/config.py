@@ -35,14 +35,14 @@ _MODELS = {
 }
 PRIMARY_MODEL, FALLBACK_MODEL = _MODELS.get(AI_PROVIDER, _MODELS["groq"])
 
-CONFIDENCE_THRESHOLD    = 0.70  # シグナル採用の最低閾値
-FALLBACK_CONF_MIN       = 0.60  # これ以下は HOLD 扱い
-FALLBACK_CONF_MAX       = 0.75  # この範囲ならSonnetで再判断
+CONFIDENCE_THRESHOLD    = 0.65  # シグナル採用の最低閾値
+FALLBACK_CONF_MIN       = 0.55  # これ以下は HOLD 扱い
+FALLBACK_CONF_MAX       = 0.70  # この範囲ならSonnetで再判断
 
 # --- 取引設定 ---
 PAIRS               = ["USD_JPY", "EUR_USD"]
 TRADE_GRANULARITY   = "H1"   # メイン足（H1=1時間足）
-CANDLE_COUNTS       = {"H1": 48, "H4": 30, "D": 20}
+CANDLE_COUNTS       = {"H1": 100, "H4": 30, "D": 20}
 SCALP_CANDLE_COUNTS = {"M15": 60, "M30": 24, "H1": 12}
 
 # --- リスク管理 ---
