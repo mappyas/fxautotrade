@@ -19,8 +19,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from src.ai.analyzer import analyze
 from src.ai.indicators import calc_indicators
-from src.config import CANDLE_COUNTS, PAIRS, PAPER_TRADE
+from src.config import CANDLE_COUNTS, FINNHUB_API_KEY, PAIRS, PAPER_TRADE, SCALP_CANDLE_COUNTS
 from src.data.client_factory import get_data_client
+from src.data.economic_calendar import fetch_economic_events
 from src.trading.order import execute
 from src.trading.session import get_session
 
@@ -305,26 +306,38 @@ def render_signal_card(signal, current_price: float, pair: str) -> None:
 # ------------------------------------------------------------------
 # 分析実行
 # ------------------------------------------------------------------
-def run_analysis(client, pairs: list[str]) -> dict:
+def run_analysis(client, pairs: list[str], trade_mode: str = "daytrading") -> dict:
     results = {}
     progress = st.progress(0, text="分析準備中...")
+
+    # 経済指標を一度だけ取得（全ペア共通）
+    economic_events = fetch_economic_events(FINNHUB_API_KEY)
+
+    candle_counts = SCALP_CANDLE_COUNTS if trade_mode == "scalping" else CANDLE_COUNTS
 
     for idx, pair in enumerate(pairs):
         progress.progress(idx / len(pairs), text=f"{pair} 分析中...")
         try:
-            candles   = client.get_multi_granularity_candles(pair, CANDLE_COUNTS)
+            candles   = client.get_multi_granularity_candles(pair, candle_counts)
             positions = client.get_open_positions()
 
-            if not candles.get("H1"):
+            # スキャル: M15がメイン足、デイトレ: H1がメイン足
+            main_tf = "M15" if trade_mode == "scalping" else "H1"
+            mid_tf  = "M30" if trade_mode == "scalping" else "H4"
+            long_tf = "H1"  if trade_mode == "scalping" else "D"
+
+            if not candles.get(main_tf):
                 st.warning(f"{pair}: ローソク足データなし")
                 continue
 
             signal = analyze(
                 pair=pair,
-                candles_h1=candles.get("H1", []),
-                candles_h4=candles.get("H4", []),
-                candles_d=candles.get("D", []),
+                candles_h1=candles.get(main_tf, []),
+                candles_h4=candles.get(mid_tf, []),
+                candles_d=candles.get(long_tf, []),
                 open_positions=positions,
+                economic_events=economic_events,
+                trade_mode=trade_mode,
             )
 
             session = get_session(pair)
@@ -406,6 +419,13 @@ def main() -> None:
         )
         st.divider()
 
+        trade_mode = st.radio(
+            "トレードモード",
+            ["daytrading", "scalping"],
+            format_func=lambda x: "デイトレ（H1/H4/D）" if x == "daytrading" else "スキャル（M15/M30/H1）",
+            horizontal=True,
+        )
+
         selected_pairs = st.multiselect("通貨ペア", PAIRS, default=PAIRS)
 
         run_btn = st.button(
@@ -448,7 +468,7 @@ def main() -> None:
     # ---- 分析実行 ----
     if run_btn:
         with st.spinner(""):
-            results = run_analysis(client, selected_pairs)
+            results = run_analysis(client, selected_pairs, trade_mode)
         st.session_state["last_results"] = results
         st.session_state["last_run"] = now_jst().strftime("%Y-%m-%d %H:%M JST")
         st.success(f"分析完了 — {st.session_state['last_run']}")

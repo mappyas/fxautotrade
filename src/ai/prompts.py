@@ -28,7 +28,23 @@ SYSTEM_PROMPT = """\
 - confidence 0.60未満：不確実 → HOLD
 - 重要経済指標の直前直後はリスクを考慮すること
 - トレンドと逆張りする場合は confidence を下げること
+
+## SL/TP の目安（当日〜翌日決済のデイトレ想定）
+- suggested_sl_pips: 40〜70pips（通常50pips基準、ボラ高時は70pips）
+- suggested_tp_pips: 80〜140pips（リスクリワード比 1:2 を維持）
+- ATRが大きい（高ボラ）場合は広め、レンジ相場は狭めに調整すること
 """
+
+
+_TIMEFRAME_LABELS = {
+    "daytrading": ("H1", "H4", "D"),
+    "scalping":   ("M15", "M30", "H1"),
+}
+
+_SLTP_GUIDE = {
+    "daytrading": "- suggested_sl_pips: 40〜70pips（通常50pips基準、ボラ高時は70pips）\n- suggested_tp_pips: 80〜140pips（リスクリワード比 1:2 を維持）\n- ATRが大きい（高ボラ）場合は広め、レンジ相場は狭めに調整すること",
+    "scalping":   "- suggested_sl_pips: 8〜15pips（通常12pips基準）\n- suggested_tp_pips: 16〜30pips（リスクリワード比 1:2 を維持）\n- スプレッドを考慮し、ブレイクアウト直後や強いモメンタムがある場合のみエントリー推奨",
+}
 
 
 def build_user_prompt(
@@ -40,10 +56,11 @@ def build_user_prompt(
     open_positions: list[Position],
     economic_events: list[dict] | None = None,
     news: list[str] | None = None,
+    trade_mode: str = "daytrading",
 ) -> str:
     current_price = candles_h1[-1].close if candles_h1 else 0.0
+    tf_short, tf_mid, tf_long = _TIMEFRAME_LABELS.get(trade_mode, _TIMEFRAME_LABELS["daytrading"])
 
-    # ローソク足は直近10本に絞ってトークン節約
     def fmt_candles(candles: list[Candle], n: int = 10) -> list[dict]:
         return [
             {
@@ -55,11 +72,12 @@ def build_user_prompt(
 
     context = {
         "pair": pair,
+        "trade_mode": trade_mode,
         "current_price": current_price,
         "candles": {
-            "H1": fmt_candles(candles_h1, 10),
-            "H4": fmt_candles(candles_h4, 8),
-            "D":  fmt_candles(candles_d,  5),
+            tf_short: fmt_candles(candles_h1, 10),
+            tf_mid:   fmt_candles(candles_h4, 8),
+            tf_long:  fmt_candles(candles_d,  5),
         },
         "technical": {
             "sma20":  indicators_h1.sma20,
@@ -82,4 +100,7 @@ def build_user_prompt(
         "news": news or [],
     }
 
-    return f"以下のデータを分析してトレードシグナルを出力してください。\n\n```json\n{json.dumps(context, ensure_ascii=False, indent=2)}\n```"
+    sltp_guide = _SLTP_GUIDE.get(trade_mode, _SLTP_GUIDE["daytrading"])
+    mode_note = f"\n\n## 今回のモード: {trade_mode}\n{sltp_guide}"
+
+    return f"以下のデータを分析してトレードシグナルを出力してください。{mode_note}\n\n```json\n{json.dumps(context, ensure_ascii=False, indent=2)}\n```"

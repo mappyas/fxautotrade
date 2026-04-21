@@ -46,15 +46,16 @@ def analyze(
     open_positions: list[Position],
     economic_events: list[dict] | None = None,
     news: list[str] | None = None,
+    trade_mode: str = "daytrading",
 ) -> Signal:
     indicators = calc_indicators(candles_h1)
     model = _select_model(indicators, economic_events or [])
-    signal = _call_llm(model, pair, candles_h1, candles_h4, candles_d, indicators, open_positions, economic_events, news)
+    signal = _call_llm(model, pair, candles_h1, candles_h4, candles_d, indicators, open_positions, economic_events, news, trade_mode)
 
     # Confidence が境界値ならフォールバックモデルで再判断
     if model == PRIMARY_MODEL and FALLBACK_CONF_MIN <= signal.confidence <= FALLBACK_CONF_MAX:
         try:
-            signal = _call_llm(FALLBACK_MODEL, pair, candles_h1, candles_h4, candles_d, indicators, open_positions, economic_events, news)
+            signal = _call_llm(FALLBACK_MODEL, pair, candles_h1, candles_h4, candles_d, indicators, open_positions, economic_events, news, trade_mode)
             signal.fallback_used = True
         except Exception as e:
             logger.warning("フォールバックモデル失敗（レート制限等）、プライマリ結果を使用: %s", e)
@@ -91,10 +92,11 @@ def _call_llm(
     open_positions: list[Position],
     economic_events: list[dict] | None,
     news: list[str] | None,
+    trade_mode: str = "daytrading",
 ) -> Signal:
     user_prompt = build_user_prompt(
         pair, candles_h1, candles_h4, candles_d,
-        indicators, open_positions, economic_events, news,
+        indicators, open_positions, economic_events, news, trade_mode,
     )
 
     if AI_PROVIDER == "groq":

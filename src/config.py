@@ -25,11 +25,12 @@ AI_PROVIDER       = os.getenv("AI_PROVIDER", "groq")   # groq | claude | gemini
 GROQ_API_KEY      = os.getenv("GROQ_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 GEMINI_API_KEY    = os.getenv("GEMINI_API_KEY", "")
+FINNHUB_API_KEY   = os.getenv("FINNHUB_API_KEY", "")
 
 # --- ハイブリッドモデル設定 ---
 _MODELS = {
     "groq":   ("llama-3.1-8b-instant",       "llama-3.3-70b-versatile"),
-    "claude": ("claude-haiku-4-5-20251001",   "claude-sonnet-4-6"),
+    "claude": ("claude-sonnet-4-6",            "claude-haiku-4-5-20251001"),
     "gemini": ("gemini-2.5-flash",            "gemini-2.5-flash"),
 }
 PRIMARY_MODEL, FALLBACK_MODEL = _MODELS.get(AI_PROVIDER, _MODELS["groq"])
@@ -42,6 +43,7 @@ FALLBACK_CONF_MAX       = 0.75  # この範囲ならSonnetで再判断
 PAIRS               = ["USD_JPY", "EUR_USD"]
 TRADE_GRANULARITY   = "H1"   # メイン足（H1=1時間足）
 CANDLE_COUNTS       = {"H1": 48, "H4": 30, "D": 20}
+SCALP_CANDLE_COUNTS = {"M15": 60, "M30": 24, "H1": 12}
 
 # --- リスク管理 ---
 RISK_PCT          = 2.0      # 1トレードあたり資金の2%リスク
@@ -50,8 +52,10 @@ MAX_POSITIONS     = 3        # 最大同時ポジション数
 
 # --- SL / TP ---
 USE_AI_SLTP       = True     # True: AI提案 / False: 固定値
-DEFAULT_SL_PIPS   = 30
-DEFAULT_TP_PIPS   = 60
+DEFAULT_SL_PIPS   = 50
+DEFAULT_TP_PIPS   = 100
+SCALP_SL_PIPS     = 12
+SCALP_TP_PIPS     = 24
 
 # --- 動作モード ---
 PAPER_TRADE       = os.getenv("PAPER_TRADE", "true").lower() == "true"
