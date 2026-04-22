@@ -10,7 +10,11 @@ from src.data.oanda_client import Candle, Position
 SYSTEM_PROMPT = """\
 あなたはプロのFXトレーダーです。提供されたデータを分析し、トレードシグナルをJSONで出力してください。
 
-## 出力フォーマット（必ずこの形式で返すこと）
+## 厳守事項
+- 必ず以下のJSONのみを返すこと。説明文・マークダウン・前置き・後書きは一切不要。
+- コードブロック（```json）で囲むこと。
+
+## 出力フォーマット
 ```json
 {
   "action": "BUY" または "SELL" または "HOLD",
