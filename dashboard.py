@@ -19,7 +19,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from src.ai.analyzer import analyze
 from src.ai.indicators import calc_indicators
-from src.config import CANDLE_COUNTS, FINNHUB_API_KEY, PAIRS, PAPER_TRADE, SCALP_CANDLE_COUNTS
+from src.config import CANDLE_COUNTS, DISCORD_WEBHOOK_URL, FINNHUB_API_KEY, PAIRS, PAPER_TRADE, SCALP_CANDLE_COUNTS
+from src.notifications.alert_filter import check_and_notify
 from src.data.client_factory import get_data_client
 from src.data.economic_calendar import fetch_economic_events
 from src.trading.order import execute
@@ -450,6 +451,19 @@ def main() -> None:
     # ---- ヘッダー ----
     st.markdown("## FX AutoBuy Dashboard")
     st.caption(f"現在時刻: {now_jst().strftime('%Y-%m-%d %H:%M JST')}")
+
+    # ---- テクニカルアラートチェック（AIなし・毎回実行）----
+    if DISCORD_WEBHOOK_URL:
+        alerted = []
+        for pair in selected_pairs:
+            candles = _fetch_candles(pair)
+            if candles:
+                ind = calc_indicators(candles)
+                fired = check_and_notify(pair, ind, DISCORD_WEBHOOK_URL)
+                if fired:
+                    alerted.append(f"{pair.replace('_', '/')} ({fired})")
+        if alerted:
+            st.toast(f"Discord通知送信: {', '.join(alerted)}", icon="🔔")
 
     # ---- クライアント & 口座情報 ----
     client  = get_data_client()

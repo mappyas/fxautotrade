@@ -65,3 +65,6 @@ GCP_PROJECT_ID    = os.getenv("GCP_PROJECT_ID", "")
 
 # --- Slack ---
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
+
+# --- Discord ---
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
