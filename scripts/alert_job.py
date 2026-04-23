@@ -36,11 +36,16 @@ def main() -> None:
                 continue
 
             ind = calc_indicators(candles)
-            fired = check_and_notify(pair, ind, DISCORD_WEBHOOK_URL)
-            if fired:
-                logger.info("%s: 通知送信 (%s)", pair, fired)
+            from src.notifications.alert_filter import _detect_condition, _is_cooled_down, _load_state
+            condition = _detect_condition(ind)
+            if condition is None:
+                logger.info("%s: 条件なし (RSI=%.1f, trend=%s)", pair, ind.rsi14 or 0, ind.trend)
+            elif not _is_cooled_down(_load_state(), pair):
+                logger.info("%s: クールダウン中", pair)
             else:
-                logger.info("%s: 条件なし or クールダウン中", pair)
+                fired = check_and_notify(pair, ind, DISCORD_WEBHOOK_URL)
+                if fired:
+                    logger.info("%s: 通知送信 (%s)", pair, fired)
         except Exception as e:
             logger.error("%s: エラー %s", pair, e)
 
