@@ -1,9 +1,7 @@
 name: FX Alert Job
 
 on:
-  schedule:
-    - cron: "*/5 * * * *"    # 5分ごと
-  workflow_dispatch:           # 手動実行ボタン
+  workflow_dispatch:   # cron-job.org から外部トリガー（またはGitHub上で手動実行）
 
 jobs:
   alert:
