@@ -84,6 +84,7 @@ def build_user_prompt(
             tf_long:  fmt_candles(candles_d,   8),
         },
         "technical": {
+            "sma5":   indicators_h1.sma5,
             "sma20":  indicators_h1.sma20,
             "sma50":  indicators_h1.sma50,
             "rsi14":  indicators_h1.rsi14,

@@ -8,6 +8,7 @@ from src.data.oanda_client import Candle
 
 @dataclass
 class TechnicalIndicators:
+    sma5:  float | None
     sma20: float | None
     sma50: float | None
     rsi14: float | None
@@ -17,12 +18,13 @@ class TechnicalIndicators:
 
 def calc_indicators(candles: list[Candle]) -> TechnicalIndicators:
     if not candles:
-        return TechnicalIndicators(None, None, None, None, "FLAT")
+        return TechnicalIndicators(None, None, None, None, None, "FLAT")
 
     closes = [c.close for c in candles]
     highs  = [c.high  for c in candles]
     lows   = [c.low   for c in candles]
 
+    sma5  = _sma(closes, 5)
     sma20 = _sma(closes, 20)
     sma50 = _sma(closes, 50)
     rsi14 = _rsi(closes, 14)
@@ -30,6 +32,7 @@ def calc_indicators(candles: list[Candle]) -> TechnicalIndicators:
     trend = _trend(sma20, sma50, closes[-1] if closes else None)
 
     return TechnicalIndicators(
+        sma5 =round(sma5,  5) if sma5  else None,
         sma20=round(sma20, 5) if sma20 else None,
         sma50=round(sma50, 5) if sma50 else None,
         rsi14=round(rsi14, 2) if rsi14 else None,

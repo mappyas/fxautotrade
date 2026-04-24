@@ -535,14 +535,15 @@ def main() -> None:
                         )
 
                         ind = calc_indicators(h1)
-                        i1, i2, i3, i4, i5 = st.columns(5)
+                        i1, i2, i3, i4, i5, i6 = st.columns(6)
                         current = h1[-1].close
                         prev    = h1[-2].close if len(h1) > 1 else current
                         i1.metric("現在値",  f"{current:.3f}", f"{current - prev:+.3f}")
-                        i2.metric("SMA20",  f"{ind.sma20:.3f}"  if ind.sma20  else "—")
-                        i3.metric("SMA50",  f"{ind.sma50:.3f}"  if ind.sma50  else "—")
-                        i4.metric("RSI14",  f"{ind.rsi14:.1f}"  if ind.rsi14  else "—")
-                        i5.metric("トレンド", ind.trend)
+                        i2.metric("SMA5",   f"{ind.sma5:.3f}"   if ind.sma5   else "—")
+                        i3.metric("SMA20",  f"{ind.sma20:.3f}"  if ind.sma20  else "—")
+                        i4.metric("SMA50",  f"{ind.sma50:.3f}"  if ind.sma50  else "—")
+                        i5.metric("RSI14",  f"{ind.rsi14:.1f}"  if ind.rsi14  else "—")
+                        i6.metric("トレンド", ind.trend)
                     else:
                         st.warning("ローソク足データを取得できませんでした")
 

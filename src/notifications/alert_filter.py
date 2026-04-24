@@ -43,20 +43,32 @@ def _detect_condition(ind: TechnicalIndicators) -> tuple[str, str] | None:
     条件を判定して (condition_key, message) を返す。
     条件なし → None
     """
-    rsi = ind.rsi14
+    rsi   = ind.rsi14
     trend = ind.trend
+    sma5  = ind.sma5
+    sma20 = ind.sma20
 
     if rsi is None:
         return None
 
-    if rsi < 30:
+    # RSI 過買い・過売り（緩め）
+    if rsi < 40:
         return ("RSI_OVERSOLD", "🔵 売られすぎ（RSI {:.1f}）→ 買いチャンス候補".format(rsi))
-    if rsi > 70:
+    if rsi > 60:
         return ("RSI_OVERBOUGHT", "🔴 買われすぎ（RSI {:.1f}）→ 売りチャンス候補".format(rsi))
-    if trend == "UP" and rsi <= 45:
+
+    # 押し目・戻り売り
+    if trend == "UP" and rsi <= 50:
         return ("PULLBACK_BUY", "🟢 上昇トレンド中の押し目（RSI {:.1f}）→ 押し目買い候補".format(rsi))
-    if trend == "DOWN" and rsi >= 55:
+    if trend == "DOWN" and rsi >= 50:
         return ("PULLBACK_SELL", "🟠 下降トレンド中の戻り（RSI {:.1f}）→ 戻り売り候補".format(rsi))
+
+    # SMA5/SMA20 クロス方向
+    if sma5 and sma20:
+        if sma5 > sma20 and trend != "DOWN":
+            return ("SMA_BULL", "📈 SMA5 > SMA20（RSI {:.1f}）→ 買い方向".format(rsi))
+        if sma5 < sma20 and trend != "UP":
+            return ("SMA_BEAR", "📉 SMA5 < SMA20（RSI {:.1f}）→ 売り方向".format(rsi))
 
     return None
 
