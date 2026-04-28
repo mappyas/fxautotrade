@@ -84,12 +84,15 @@ def build_user_prompt(
             tf_long:  fmt_candles(candles_d,   8),
         },
         "technical": {
-            "sma5":   indicators_h1.sma5,
-            "sma20":  indicators_h1.sma20,
-            "sma50":  indicators_h1.sma50,
-            "rsi14":  indicators_h1.rsi14,
-            "atr14":  indicators_h1.atr14,
-            "trend":  indicators_h1.trend,
+            "sma5":        indicators_h1.sma5,
+            "sma20":       indicators_h1.sma20,
+            "sma50":       indicators_h1.sma50,
+            "rsi14":       indicators_h1.rsi14,
+            "atr14":       indicators_h1.atr14,
+            "macd_line":   indicators_h1.macd_line,
+            "macd_signal": indicators_h1.macd_signal,
+            "macd_hist":   indicators_h1.macd_hist,
+            "trend":       indicators_h1.trend,
         },
         "open_positions": [
             {

@@ -50,12 +50,10 @@ STATE_FILE   = Path("data/sim_state.json")
 
 # 条件 → エントリー方向
 CONDITION_DIRECTION = {
+    "MACD_BULL":      "BUY",
     "RSI_OVERSOLD":   "BUY",
-    "PULLBACK_BUY":   "BUY",
-    "SMA_BULL":       "BUY",
+    "MACD_BEAR":      "SELL",
     "RSI_OVERBOUGHT": "SELL",
-    "PULLBACK_SELL":  "SELL",
-    "SMA_BEAR":       "SELL",
 }
 
 

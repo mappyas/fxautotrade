@@ -42,33 +42,39 @@ def _detect_condition(ind: TechnicalIndicators) -> tuple[str, str] | None:
     """
     条件を判定して (condition_key, message) を返す。
     条件なし → None
-    """
-    rsi   = ind.rsi14
-    trend = ind.trend
-    sma5  = ind.sma5
-    sma20 = ind.sma20
 
-    if rsi is None:
+    優先順位:
+      1. MACDクロス + SMA5/20同方向（精度重視）
+      2. RSI極値 + SMA確認（補助）
+    """
+    sma5       = ind.sma5
+    sma20      = ind.sma20
+    rsi        = ind.rsi14
+    hist       = ind.macd_hist
+    hist_prev  = ind.macd_hist_prev
+
+    if sma5 is None or sma20 is None:
         return None
 
-    # RSI 過買い・過売り（緩め）
-    if rsi < 40:
-        return ("RSI_OVERSOLD", "🔵 売られすぎ（RSI {:.1f}）→ 買いチャンス候補".format(rsi))
-    if rsi > 60:
-        return ("RSI_OVERBOUGHT", "🔴 買われすぎ（RSI {:.1f}）→ 売りチャンス候補".format(rsi))
+    sma_bull = sma5 > sma20   # SMA5がSMA20の上
+    sma_bear = sma5 < sma20   # SMA5がSMA20の下
 
-    # 押し目・戻り売り
-    if trend == "UP" and rsi <= 50:
-        return ("PULLBACK_BUY", "🟢 上昇トレンド中の押し目（RSI {:.1f}）→ 押し目買い候補".format(rsi))
-    if trend == "DOWN" and rsi >= 50:
-        return ("PULLBACK_SELL", "🟠 下降トレンド中の戻り（RSI {:.1f}）→ 戻り売り候補".format(rsi))
+    # --- 1. MACDクロス + SMA同方向 ---
+    if hist is not None and hist_prev is not None:
+        macd_cross_up   = hist_prev < 0 and hist >= 0   # ゴールデンクロス
+        macd_cross_down = hist_prev > 0 and hist <= 0   # デッドクロス
 
-    # SMA5/SMA20 クロス方向
-    if sma5 and sma20:
-        if sma5 > sma20 and trend != "DOWN":
-            return ("SMA_BULL", "📈 SMA5 > SMA20（RSI {:.1f}）→ 買い方向".format(rsi))
-        if sma5 < sma20 and trend != "UP":
-            return ("SMA_BEAR", "📉 SMA5 < SMA20（RSI {:.1f}）→ 売り方向".format(rsi))
+        if macd_cross_up and sma_bull:
+            return ("MACD_BULL", "📈 MACDゴールデンクロス + SMA5>SMA20 → 買いシグナル")
+        if macd_cross_down and sma_bear:
+            return ("MACD_BEAR", "📉 MACDデッドクロス + SMA5<SMA20 → 売りシグナル")
+
+    # --- 2. RSI極値 + SMA確認 ---
+    if rsi is not None:
+        if rsi < 35 and sma_bull:
+            return ("RSI_OVERSOLD", "🔵 売られすぎ（RSI {:.1f}）+ 上方向SMA → 買い候補".format(rsi))
+        if rsi > 65 and sma_bear:
+            return ("RSI_OVERBOUGHT", "🔴 買われすぎ（RSI {:.1f}）+ 下方向SMA → 売り候補".format(rsi))
 
     return None
 
