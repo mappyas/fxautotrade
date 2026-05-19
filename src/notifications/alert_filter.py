@@ -14,6 +14,24 @@ logger = logging.getLogger(__name__)
 JST = timezone(timedelta(hours=9))
 COOLDOWN_MINUTES = 30
 STATE_FILE = Path("data/alert_state.json")
+PLAN_STATE_FILE = Path("data/plan_state.json")
+
+# 条件とエントリー方向の対応
+_CONDITION_DIRECTION = {
+    "MACD_BULL":      "BUY",
+    "RSI_OVERSOLD":   "BUY",
+    "MACD_BEAR":      "SELL",
+    "RSI_OVERBOUGHT": "SELL",
+}
+
+
+def _load_plan_state() -> dict:
+    if PLAN_STATE_FILE.exists():
+        try:
+            return json.loads(PLAN_STATE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
 
 
 def _load_state() -> dict:
@@ -87,11 +105,40 @@ def check_and_notify(
     """
     条件チェックして通知。発火した condition_key を返す（なければ None）。
     """
+    now = datetime.now(JST)
+
+    # --- Planフェーズのフィルター ---
+    plan_state = _load_plan_state()
+    plan = plan_state.get(pair, {})
+
+    # avoid_until: 経済指標禁止期間チェック
+    avoid_until_str = plan.get("avoid_until")
+    if avoid_until_str:
+        try:
+            avoid_until = datetime.fromisoformat(avoid_until_str)
+            if now < avoid_until:
+                logger.debug("%s: エントリー禁止期間中 (〜%s)", pair, avoid_until.strftime("%H:%M"))
+                return None
+        except Exception:
+            pass
+
+    # --- テクニカル条件チェック ---
     result = _detect_condition(ind)
     if result is None:
         return None
 
     condition_key, detail = result
+
+    # bias: Planの方向バイアスと逆方向の条件はスキップ
+    plan_bias = plan.get("bias", "NEUTRAL")
+    condition_dir = _CONDITION_DIRECTION.get(condition_key)
+    if plan_bias == "SELL" and condition_dir == "BUY":
+        logger.debug("%s: Plan bias=SELL のためBUY条件をスキップ (%s)", pair, condition_key)
+        return None
+    if plan_bias == "BUY" and condition_dir == "SELL":
+        logger.debug("%s: Plan bias=BUY のためSELL条件をスキップ (%s)", pair, condition_key)
+        return None
+
     state = _load_state()
 
     if not _is_cooled_down(state, pair):

@@ -21,7 +21,7 @@ OANDA_ACCOUNT_ID  = os.getenv("OANDA_ACCOUNT_ID", "")
 OANDA_ENVIRONMENT = os.getenv("OANDA_ENVIRONMENT", "practice")  # practice | live
 
 # --- AI プロバイダー ---
-AI_PROVIDER       = os.getenv("AI_PROVIDER", "groq")   # groq | claude | gemini
+AI_PROVIDER       = os.getenv("AI_PROVIDER", "claude")  # groq | claude | gemini
 GROQ_API_KEY      = os.getenv("GROQ_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 GEMINI_API_KEY    = os.getenv("GEMINI_API_KEY", "")
@@ -40,7 +40,7 @@ FALLBACK_CONF_MIN       = 0.55  # これ以下は HOLD 扱い
 FALLBACK_CONF_MAX       = 0.70  # この範囲ならSonnetで再判断
 
 # --- 取引設定 ---
-PAIRS               = ["USD_JPY", "EUR_USD"]
+PAIRS               = ["USD_JPY"]
 TRADE_GRANULARITY   = "H1"   # メイン足（H1=1時間足）
 CANDLE_COUNTS       = {"H1": 100, "H4": 30, "D": 20}
 SCALP_CANDLE_COUNTS = {"M15": 60, "M30": 24, "H1": 12}

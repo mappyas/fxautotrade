@@ -4,8 +4,10 @@
 
 ```
 GCP Compute Engine (e2-micro / us-central1-a)
-  └── background_worker.py（1分ごとにテクニカルアラートチェック）
-        └── 条件成立 → Discord 通知
+  ├── background_worker.py（systemd: 1分ごとにテクニカルアラートチェック）
+  │     └── 条件成立 + Planのバイアス一致 → Discord 通知
+  └── plan_job.py（cron: 1日4回 Planフェーズ実行）
+        └── Claude API で取引方針を生成 → data/plan_state.json に保存 → Discord 通知
 
 Streamlit Community Cloud
   └── dashboard.py（手動AI分析・チャート確認）
@@ -13,6 +15,15 @@ Streamlit Community Cloud
 GitHub Actions + cron-job.org
   └── alert_job.py（バックアップ用、現在は補助的）
 ```
+
+### Planフェーズ実行タイミング（JST）
+
+| 時刻 | セッション | 役割 |
+|------|-----------|------|
+| 08:30 | TOKYO | 東京セッション前、当日の大方針を決定 |
+| 15:30 | LONDON_OPEN | 東京の結果を受けてロンドン戦略を更新 |
+| 20:30 | NY_OPEN | 米指標確認、NY開始前の最終調整 |
+| 23:00 | FINAL | 本日の手仕舞い判断・翌日への引き継ぎ |
 
 ---
 
@@ -42,6 +53,30 @@ sudo systemctl restart fxautobuy-worker
 ```bash
 sudo systemctl stop fxautobuy-worker
 sudo systemctl start fxautobuy-worker
+```
+
+---
+
+## Planジョブのcron設定（既存VMに追加する場合）
+
+SSH接続後、以下を実行：
+
+```bash
+CRON_CMD="/opt/fxautobuy/venv/bin/python3 /opt/fxautobuy/scripts/plan_job.py >> /opt/fxautobuy/data/plan_job.log 2>&1"
+(crontab -l 2>/dev/null; echo "30 23 * * * $CRON_CMD") | crontab -
+(crontab -l 2>/dev/null; echo "30  6 * * * $CRON_CMD") | crontab -
+(crontab -l 2>/dev/null; echo "30 11 * * * $CRON_CMD") | crontab -
+(crontab -l 2>/dev/null; echo " 0 14 * * * $CRON_CMD") | crontab -
+```
+
+設定確認：
+```bash
+crontab -l
+```
+
+Planログ確認：
+```bash
+tail -f /opt/fxautobuy/data/plan_job.log
 ```
 
 ---
@@ -82,14 +117,19 @@ gcloud compute instances start fxautobuy-worker --zone=us-central1-a --project=p
 
 ## Discord アラート条件
 
-| 条件 | 通知内容 |
-|------|----------|
-| RSI < 40 | 🔵 買いチャンス候補 |
-| RSI > 60 | 🔴 売りチャンス候補 |
-| トレンドUP + RSI ≤ 50 | 🟢 押し目買い候補 |
-| トレンドDOWN + RSI ≥ 50 | 🟠 戻り売り候補 |
-| SMA5 > SMA20 | 📈 買い方向 |
-| SMA5 < SMA20 | 📉 売り方向 |
+テクニカル条件（AIなし）+ Planフィルターの2段階で判定：
+
+| 優先 | 条件 | 方向 |
+|------|------|------|
+| 1 | MACDヒストグラムがマイナス→プラス + SMA5 > SMA20 | 📈 BUY |
+| 1 | MACDヒストグラムがプラス→マイナス + SMA5 < SMA20 | 📉 SELL |
+| 2 | RSI < 35 + SMA5 > SMA20 | 📈 BUY候補 |
+| 2 | RSI > 65 + SMA5 < SMA20 | 📉 SELL候補 |
+
+**Planフィルター（追加チェック）:**
+- `avoid_until` が設定されている時間帯は全エントリー禁止（経済指標前後）
+- Planの `bias=SELL` のとき BUY条件を無視（逆も同様）
+- トレンドDOWN時はBUY禁止、トレンドUP時はSELL禁止
 
 - 同一ペアは**30分間**再通知しない
 - 通知来たら Streamlit ダッシュボードでAI分析を実行して判断
