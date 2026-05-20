@@ -49,7 +49,7 @@ def main() -> None:
     from src.ai.planner import SESSIONS, run_plan
     from src.config import DISCORD_WEBHOOK_URL, PAIRS
     from src.data.client_factory import get_data_client
-    from src.data.economic_calendar import get_economic_events
+    from src.data.economic_calendar import fetch_economic_events
     from src.notifications.discord import send_discord
 
     Path("data").mkdir(exist_ok=True)
@@ -63,7 +63,8 @@ def main() -> None:
     client = get_data_client()
 
     try:
-        events = get_economic_events()
+        from src.config import FINNHUB_API_KEY
+        events = fetch_economic_events(FINNHUB_API_KEY) if FINNHUB_API_KEY else []
     except Exception as e:
         logger.warning("経済指標取得失敗: %s", e)
         events = []
