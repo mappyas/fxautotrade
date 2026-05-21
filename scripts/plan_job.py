@@ -17,14 +17,18 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+LOG_FILE = ROOT / "data" / "plan_job.log"
+LOG_FILE.parent.mkdir(exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("data/plan_job.log", encoding="utf-8"),
+        logging.FileHandler(str(LOG_FILE), encoding="utf-8"),
     ],
 )
 logger = logging.getLogger(__name__)
@@ -51,8 +55,6 @@ def main() -> None:
     from src.data.client_factory import get_data_client
     from src.data.economic_calendar import fetch_economic_events
     from src.notifications.discord import send_discord
-
-    Path("data").mkdir(exist_ok=True)
 
     now = datetime.now(JST)
     session = _detect_session(now)
