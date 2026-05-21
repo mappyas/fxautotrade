@@ -44,6 +44,7 @@ _PAIR_MAP: dict[str, str] = {
 
 # OANDA粒度 → yfinance interval 変換
 _GRANULARITY_MAP: dict[str, str] = {
+    "M5":  "5m",
     "M15": "15m",
     "M30": "30m",
     "H1":  "1h",
@@ -53,6 +54,7 @@ _GRANULARITY_MAP: dict[str, str] = {
 
 # yfinance で取得できる最大期間（interval別）
 _MAX_PERIOD: dict[str, str] = {
+    "5m":  "60d",
     "15m": "60d",
     "30m": "60d",
     "1h":  "730d",
