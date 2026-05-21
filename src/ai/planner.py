@@ -203,7 +203,7 @@ def _call_claude_plan(user_prompt: str) -> str:
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     resp = client.messages.create(
         model=PRIMARY_MODEL,
-        max_tokens=1024,
+        max_tokens=2048,
         system=_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_prompt}],
     )
