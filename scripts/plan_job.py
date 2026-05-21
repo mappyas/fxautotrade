@@ -48,10 +48,53 @@ def _detect_session(now: datetime) -> str:
         return "FINAL"
 
 
+def _format_discord(plan, now: datetime) -> str:
+    from src.ai.planner import SESSIONS
+    session_label = SESSIONS.get(plan.session, plan.session)
+    bias_icon = {"BUY": "📈", "SELL": "📉", "NEUTRAL": "⏸️"}.get(plan.bias, "⏸️")
+    pair_label = plan.pair.replace("_", "/")
+
+    lines = [
+        f"**【Planフェーズ】{session_label}**",
+        f"⏰ {now.strftime('%H:%M JST')}",
+        "",
+        f"{bias_icon} **{pair_label}　{plan.bias}**",
+    ]
+
+    if plan.avoid_until:
+        avoid_dt = datetime.fromisoformat(plan.avoid_until)
+        lines.append(f"⚠️ エントリー禁止〜{avoid_dt.strftime('%H:%M JST')}")
+
+    lines += [
+        "",
+        f"**ファンダ:** {plan.fundamental}",
+        "",
+        f"**テクニカル:** {plan.technical}",
+        "",
+    ]
+
+    for p in plan.plans:
+        label   = p.get("label", "?")
+        cond    = p.get("condition", "")
+        entry   = p.get("entry", "HOLD")
+        sl      = p.get("sl_pips")
+        tp      = p.get("tp_pips")
+        notes   = p.get("notes", "")
+        entry_icon = {"BUY": "📈", "SELL": "📉", "HOLD": "⏸️"}.get(entry, "⏸️")
+
+        sl_tp = f"SL:{sl}pips / TP:{tp}pips" if sl and tp else "—"
+        lines.append(f"**Plan {label}** {entry_icon} {entry}　{sl_tp}")
+        lines.append(f"　条件: {cond}")
+        if notes:
+            lines.append(f"　{notes}")
+
+    return "\n".join(lines)
+
+
 def main() -> None:
     from src.ai.indicators import calc_indicators
     from src.ai.planner import SESSIONS, run_plan
-    from src.config import DISCORD_WEBHOOK_URL, PAIRS
+    from src.config import DISCORD_WEBHOOK_URL, FINNHUB_API_KEY, PAIRS
     from src.data.client_factory import get_data_client
     from src.data.economic_calendar import fetch_economic_events
     from src.notifications.discord import send_discord
@@ -65,55 +108,33 @@ def main() -> None:
     client = get_data_client()
 
     try:
-        from src.config import FINNHUB_API_KEY
         events = fetch_economic_events(FINNHUB_API_KEY) if FINNHUB_API_KEY else []
     except Exception as e:
         logger.warning("経済指標取得失敗: %s", e)
         events = []
 
-    results = []
     for pair in PAIRS:
         try:
+            candles_m5 = client.get_candles(pair, "M5",  60)
             candles_h1 = client.get_candles(pair, "H1", 100)
-            candles_h4 = client.get_candles(pair, "H4", 30)
-            candles_d  = client.get_candles(pair, "D",  20)
+            candles_h4 = client.get_candles(pair, "H4",  30)
+            candles_d  = client.get_candles(pair, "D",   20)
 
             if not candles_h1:
                 logger.warning("%s: ローソク足データなし", pair)
                 continue
 
-            ind = calc_indicators(candles_h1)
-            plan = run_plan(pair, session, candles_h1, candles_h4, candles_d, ind, events)
-            results.append(plan)
+            ind  = calc_indicators(candles_h1)
+            plan = run_plan(pair, session, candles_m5, candles_h1, candles_h4, candles_d, ind, events)
 
-            logger.info(
-                "%s: bias=%s avoid_until=%s | %s",
-                pair, plan.bias, plan.avoid_until, plan.notes,
-            )
+            logger.info("%s: bias=%s plans=%d", pair, plan.bias, len(plan.plans))
+
+            if DISCORD_WEBHOOK_URL:
+                msg = _format_discord(plan, now)
+                send_discord(DISCORD_WEBHOOK_URL, msg)
+
         except Exception as e:
             logger.error("%s: エラー %s", pair, e)
-
-    if not results:
-        logger.warning("Planを生成できたペアがありません")
-        return
-
-    # Discord通知
-    if DISCORD_WEBHOOK_URL:
-        bias_icon = {"BUY": "📈", "SELL": "📉", "NEUTRAL": "⏸️"}
-        lines = [
-            f"**【Planフェーズ】{session_label}**",
-            f"⏰ {now.strftime('%H:%M JST')}",
-            "",
-        ]
-        for plan in results:
-            icon = bias_icon.get(plan.bias, "⏸️")
-            lines.append(f"{icon} **{plan.pair.replace('_', '/')}**: {plan.bias}")
-            if plan.avoid_until:
-                avoid_dt = datetime.fromisoformat(plan.avoid_until)
-                lines.append(f"　⚠️ エントリー禁止〜{avoid_dt.strftime('%H:%M JST')}")
-            lines.append(f"　{plan.notes}")
-
-        send_discord(DISCORD_WEBHOOK_URL, "\n".join(lines))
 
     logger.info("=== Planフェーズ完了 ===")
 

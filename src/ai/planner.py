@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -27,7 +27,7 @@ SESSIONS: dict[str, str] = {
 }
 
 _SYSTEM_PROMPT = """\
-あなたはプロのFXトレーダーです。指定されたセッションの取引方針をJSONで出力してください。
+あなたはプロのFXスキャルパーです。指定されたセッションの取引方針をJSONで出力してください。
 
 ## 厳守事項
 - 必ず以下のJSONのみを返すこと。説明文・マークダウン・前置き・後書きは一切不要。
@@ -37,28 +37,61 @@ _SYSTEM_PROMPT = """\
 ```json
 {
   "session": "セッション名（文字列）",
+  "fundamental": "ファンダメンタル視点の分析（経済指標・中央銀行動向・市場センチメント・介入リスク等）",
+  "technical": "テクニカル視点の分析（H1でトレンド確認、M5でエントリー状況を説明）",
   "bias": "BUY" または "SELL" または "NEUTRAL",
-  "avoid_until": null または "2026-05-19T21:45:00+09:00"（経済指標禁止期間の終了時刻・ISO形式）,
-  "notes": "方針の説明（日本語100字程度）"
+  "avoid_until": null または "2026-05-21T21:45:00+09:00"（高インパクト指標の禁止期間終了時刻・ISO形式）,
+  "plans": [
+    {
+      "label": "A",
+      "condition": "最優先エントリー条件（具体的なテクニカル条件）",
+      "entry": "BUY" または "SELL" または "HOLD",
+      "sl_pips": 10,
+      "tp_pips": 20,
+      "notes": "補足・注意事項"
+    },
+    {
+      "label": "B",
+      "condition": "サブシナリオの条件",
+      "entry": "BUY" または "SELL" または "HOLD",
+      "sl_pips": 12,
+      "tp_pips": 24,
+      "notes": "補足・注意事項"
+    },
+    {
+      "label": "C",
+      "condition": "上記が揃わない場合",
+      "entry": "HOLD",
+      "sl_pips": null,
+      "tp_pips": null,
+      "notes": "見送り条件"
+    }
+  ]
 }
 ```
 
 ## 判断基準
-- bias: D足・H4足のトレンドを最重視し、現セッションでどちら方向が優位かを判断する
-- NEUTRAL: 上位足とH1が矛盾している、またはレンジ相場のとき
-- avoid_until: 高インパクト経済指標がある場合、発表30分前〜発表後15分の終了時刻を設定する
-- 上位足トレンドと逆方向は bias=NEUTRAL で表現する（強制禁止ではなく消極的判断）
+- **トレンド確認**: H1足でトレンド方向を決定し、M5足でエントリータイミングを探す
+- **bias**: H1のトレンドが優位な方向。上位足と短期足が矛盾している・レンジ相場の場合はNEUTRAL
+- **SL/TP目安（スキャル）**: SL 8〜15pips / TP 16〜30pips（RR 1:2以上を維持）
+- **avoid_until**: 高インパクト経済指標がある場合、発表30分前〜発表後15分の終了時刻を設定する
+- **Plan A**: 最も確度が高いシナリオ。条件が揃い次第エントリー
+- **Plan B**: AのサブシナリオまたはAが不発の場合の代替案
+- **Plan C**: 見送り条件（上記が揃わない場合は無理にエントリーしない）
+- 上位足トレンドと逆方向のエントリーは原則禁止
 """
 
 
 @dataclass
 class PlanResult:
     session:     str
-    bias:        str        # "BUY" | "SELL" | "NEUTRAL"
-    avoid_until: str | None # ISO timestamp or None
-    notes:       str
-    pair:        str
-    timestamp:   str
+    fundamental: str
+    technical:   str
+    bias:        str              # "BUY" | "SELL" | "NEUTRAL"
+    avoid_until: str | None       # ISO timestamp or None
+    plans:       list[dict] = field(default_factory=list)
+    pair:        str = ""
+    timestamp:   str = ""
 
 
 # ------------------------------------------------------------------
@@ -114,6 +147,7 @@ def _load_recent_check_log(n: int = 5) -> list[dict]:
 def build_plan_prompt(
     pair: str,
     session: str,
+    candles_m5: list[Candle],
     candles_h1: list[Candle],
     candles_h4: list[Candle],
     candles_d:  list[Candle],
@@ -135,6 +169,7 @@ def build_plan_prompt(
         "session":      session_label,
         "current_time": datetime.now(JST).strftime("%Y-%m-%d %H:%M JST"),
         "candles": {
+            "M5": fmt(candles_m5, 60),
             "H1": fmt(candles_h1, 20),
             "H4": fmt(candles_h4, 12),
             "D":  fmt(candles_d,   8),
@@ -148,8 +183,8 @@ def build_plan_prompt(
             "macd_hist": ind.macd_hist,
             "trend":     ind.trend,
         },
-        "economic_events":   economic_events,
-        "recent_check_log":  _load_recent_check_log(5),
+        "economic_events":  economic_events,
+        "recent_check_log": _load_recent_check_log(5),
     }
 
     return (
@@ -168,7 +203,7 @@ def _call_claude_plan(user_prompt: str) -> str:
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     resp = client.messages.create(
         model=PRIMARY_MODEL,
-        max_tokens=512,
+        max_tokens=1024,
         system=_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_prompt}],
     )
@@ -189,8 +224,10 @@ def _parse_plan(raw: str, pair: str, session: str) -> PlanResult:
         data = json.loads(json_str)
     except Exception:
         logger.warning("Planレスポンス解析失敗: %s", raw[:200])
-        return PlanResult(session=session, bias="NEUTRAL", avoid_until=None,
-                          notes="解析失敗", pair=pair, timestamp=now_str)
+        return PlanResult(
+            session=session, fundamental="解析失敗", technical="解析失敗",
+            bias="NEUTRAL", avoid_until=None, plans=[], pair=pair, timestamp=now_str,
+        )
 
     bias = data.get("bias", "NEUTRAL")
     if bias not in ("BUY", "SELL", "NEUTRAL"):
@@ -198,9 +235,11 @@ def _parse_plan(raw: str, pair: str, session: str) -> PlanResult:
 
     return PlanResult(
         session=data.get("session", session),
+        fundamental=data.get("fundamental", ""),
+        technical=data.get("technical", ""),
         bias=bias,
         avoid_until=data.get("avoid_until"),
-        notes=data.get("notes", ""),
+        plans=data.get("plans", []),
         pair=pair,
         timestamp=now_str,
     )
@@ -213,6 +252,7 @@ def _parse_plan(raw: str, pair: str, session: str) -> PlanResult:
 def run_plan(
     pair: str,
     session: str,
+    candles_m5: list[Candle],
     candles_h1: list[Candle],
     candles_h4: list[Candle],
     candles_d:  list[Candle],
@@ -220,7 +260,7 @@ def run_plan(
     economic_events: list[dict],
 ) -> PlanResult:
     user_prompt = build_plan_prompt(
-        pair, session, candles_h1, candles_h4, candles_d, ind, economic_events
+        pair, session, candles_m5, candles_h1, candles_h4, candles_d, ind, economic_events
     )
 
     try:
@@ -230,9 +270,9 @@ def run_plan(
     except Exception as e:
         logger.error("Plan API呼び出し失敗 %s: %s", pair, e)
         plan = PlanResult(
-            session=session, bias="NEUTRAL", avoid_until=None,
-            notes=f"API呼び出し失敗: {e}", pair=pair,
-            timestamp=datetime.now(JST).isoformat(),
+            session=session, fundamental="", technical="",
+            bias="NEUTRAL", avoid_until=None, plans=[],
+            pair=pair, timestamp=datetime.now(JST).isoformat(),
         )
 
     _save_plan_state(pair, plan)
