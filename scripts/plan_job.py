@@ -100,6 +100,11 @@ def main() -> None:
     from src.notifications.discord import send_discord
 
     now = datetime.now(JST)
+
+    if now.weekday() >= 5:
+        logger.info("土日のためPlanフェーズをスキップ")
+        return
+
     session = _detect_session(now)
     session_label = SESSIONS.get(session, session)
 

@@ -74,6 +74,11 @@ def main() -> None:
     from src.notifications.discord import send_discord
 
     now = datetime.now(JST)
+
+    if now.weekday() >= 5:
+        logger.info("土日のためCheckフェーズをスキップ")
+        return
+
     logger.info("=== Checkフェーズ開始 | %s ===", now.strftime("%H:%M JST"))
 
     results = run_check_all()

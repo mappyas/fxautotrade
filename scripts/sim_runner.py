@@ -160,8 +160,8 @@ def run() -> None:
     while True:
         now = datetime.now(JST)
 
-        # 取引時間外はスキップ
-        if not (TRADE_START_HOUR <= now.hour < TRADE_END_HOUR):
+        # 土日・取引時間外はスキップ
+        if now.weekday() >= 5 or not (TRADE_START_HOUR <= now.hour < TRADE_END_HOUR):
             time.sleep(POLL_INTERVAL_SEC)
             continue
 
