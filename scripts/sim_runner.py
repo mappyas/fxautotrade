@@ -102,6 +102,20 @@ def calc_sl_tp(pair: str, direction: str, entry: float, sl_pips: int, tp_pips: i
 
 
 # ------------------------------------------------------------------
+# Discord通知
+# ------------------------------------------------------------------
+
+def _notify(msg: str) -> None:
+    try:
+        from src.config import DISCORD_WEBHOOK_URL
+        from src.notifications.discord import send_discord
+        if DISCORD_WEBHOOK_URL:
+            send_discord(DISCORD_WEBHOOK_URL, msg)
+    except Exception as e:
+        logger.warning("Discord通知失敗: %s", e)
+
+
+# ------------------------------------------------------------------
 # Planフィルター
 # ------------------------------------------------------------------
 
@@ -235,6 +249,13 @@ def run() -> None:
                     pair_label = pair.replace("_", "/")
                     logger.info("エントリー: %s %s @ %.5f (SL=%.5f / TP=%.5f) [Plan:%s]",
                                 pair_label, direction, current, sl, tp, plan.get("bias", "NEUTRAL"))
+                    _notify(
+                        f"**【エントリー】{pair_label} {direction}**\n"
+                        f"価格: {current:.5f}\n"
+                        f"SL: {sl:.5f} / TP: {tp:.5f}\n"
+                        f"条件: {key} | Plan: {plan.get('bias', 'NEUTRAL')}\n"
+                        f"⏰ {now.strftime('%H:%M JST')}"
+                    )
 
             except Exception as e:
                 logger.error("%s: エラー %s", pair, e)
@@ -278,6 +299,15 @@ def _close_trade(state: dict, trade: dict, result: str, current: float, now: dat
     pair_label = trade["pair"].replace("_", "/")
     logger.info("決済: %s %s → %s %+dpips @ %.5f",
                 pair_label, direction, result, pips, exit_price)
+
+    result_icon = {"TP": "✅", "SL": "❌", "SIGNAL_REVERSE": "🔄"}.get(result, "❓")
+    _notify(
+        f"**{result_icon} 【決済】{pair_label} {direction} → {result}**\n"
+        f"エントリー: {trade['entry_price']:.5f}\n"
+        f"決済: {exit_price:.5f}\n"
+        f"結果: {pips:+d} pips\n"
+        f"⏰ {now.strftime('%H:%M JST')}"
+    )
     return closed
 
 
@@ -288,6 +318,13 @@ def _run_check(trade: dict) -> None:
         result = run_check(trade)
         if result:
             logger.info("Check完了: bias_correct=%s | %s", result.bias_correct, result.cause)
+            bias_icon = "🎯" if result.bias_correct else "❗"
+            _notify(
+                f"**🔍 【Action】{result.pair.replace('_', '/')}**\n"
+                f"Plan的中: {bias_icon}\n"
+                f"原因: {result.cause}\n"
+                f"改善: {result.improvement}"
+            )
     except Exception as e:
         logger.error("Check実行失敗: %s", e)
 
