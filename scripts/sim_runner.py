@@ -1,13 +1,14 @@
 """
-FX 自動売買シミュレーター（ローカル実行専用・AIなし）
+FX 自動売買シミュレーター（PDCAサイクル統合版）
 
 使い方:
     python scripts/sim_runner.py
 
 動作:
-    - 1分ごとにポーリング
-    - テクニカル条件でエントリー（仮想）
-    - TP/SL到達で決済 → Discord通知
+    - 1分ごとにポーリング（09:00〜24:00 JST）
+    - Plan（plan_state.json）のbias + テクニカル条件でエントリー判断
+    - TP/SL到達または逆シグナルで自動決済
+    - 決済後に自動でCheckフェーズを実行
     - 結果を data/sim_results.json に保存
 """
 from __future__ import annotations
@@ -36,19 +37,18 @@ logger = logging.getLogger(__name__)
 # ------------------------------------------------------------------
 JST = timezone(timedelta(hours=9))
 
-START_TIME = datetime(2026, 4, 23, 23, 0, tzinfo=JST)
-END_TIME   = datetime(2026, 4, 24, 19, 0, tzinfo=JST)
+TRADE_START_HOUR = 9   # 取引開始（JST）
+TRADE_END_HOUR   = 24  # 取引終了（JST）
 
-POLL_INTERVAL_SEC = 60   # 1分ごと
-SL_PIPS = 50
-TP_PIPS = 100
+POLL_INTERVAL_SEC = 60
+SL_PIPS = 12   # スキャルデフォルト
+TP_PIPS = 24   # スキャルデフォルト
 
-PAIRS = ["USD_JPY", "EUR_USD"]
+PAIRS = ["USD_JPY"]
 
 RESULTS_FILE = Path("data/sim_results.json")
 STATE_FILE   = Path("data/sim_state.json")
 
-# 条件 → エントリー方向
 CONDITION_DIRECTION = {
     "MACD_BULL":      "BUY",
     "RSI_OVERSOLD":   "BUY",
@@ -93,24 +93,52 @@ def pip_value(pair: str) -> float:
     return 0.01 if pair.endswith("JPY") else 0.0001
 
 
-def calc_sl_tp(pair: str, direction: str, entry: float) -> tuple[float, float]:
+def calc_sl_tp(pair: str, direction: str, entry: float, sl_pips: int, tp_pips: int) -> tuple[float, float]:
     pip = pip_value(pair)
     if direction == "BUY":
-        return entry - SL_PIPS * pip, entry + TP_PIPS * pip
+        return entry - sl_pips * pip, entry + tp_pips * pip
     else:
-        return entry + SL_PIPS * pip, entry - TP_PIPS * pip
+        return entry + sl_pips * pip, entry - tp_pips * pip
 
 
 # ------------------------------------------------------------------
-# Discord 通知
+# Planフィルター
 # ------------------------------------------------------------------
 
-def notify(msg: str) -> None:
-    from src.config import DISCORD_WEBHOOK_URL
-    from src.notifications.discord import send_discord
-    if DISCORD_WEBHOOK_URL:
-        send_discord(DISCORD_WEBHOOK_URL, msg)
-    logger.info("Discord: %s", msg)
+def _get_plan(pair: str) -> dict:
+    from src.ai.planner import load_plan_state
+    return load_plan_state().get(pair, {})
+
+
+def _plan_allows_entry(plan: dict, direction: str, now: datetime) -> tuple[bool, str]:
+    """Planのbias・avoid_untilでエントリー可否を判断する"""
+    avoid_until_str = plan.get("avoid_until")
+    if avoid_until_str:
+        try:
+            avoid_until = datetime.fromisoformat(avoid_until_str)
+            if now < avoid_until:
+                return False, f"エントリー禁止期間中（〜{avoid_until.strftime('%H:%M')}）"
+        except Exception:
+            pass
+
+    bias = plan.get("bias", "NEUTRAL")
+    if bias == "SELL" and direction == "BUY":
+        return False, f"Plan bias={bias} のためBUYスキップ"
+    if bias == "BUY" and direction == "SELL":
+        return False, f"Plan bias={bias} のためSELLスキップ"
+
+    return True, ""
+
+
+def _get_sl_tp_pips(plan: dict, direction: str) -> tuple[int, int]:
+    """Plan AのSL/TPを取得する。なければデフォルト"""
+    for p in plan.get("plans", []):
+        if p.get("label") == "A" and p.get("entry") == direction:
+            sl = p.get("sl_pips")
+            tp = p.get("tp_pips")
+            if sl and tp:
+                return int(sl), int(tp)
+    return SL_PIPS, TP_PIPS
 
 
 # ------------------------------------------------------------------
@@ -125,33 +153,19 @@ def run() -> None:
     Path("data").mkdir(exist_ok=True)
     client = get_data_client()
 
-    now = datetime.now(JST)
-
-    # 開始時刻まで待機
-    if now < START_TIME:
-        wait_sec = (START_TIME - now).total_seconds()
-        logger.info("開始まで %.0f 秒待機 (%s JST)", wait_sec, START_TIME.strftime("%H:%M"))
-        time.sleep(wait_sec)
-
-    logger.info("=== シミュレーター開始 ===")
-    logger.info("期間: %s 〜 %s", START_TIME.strftime("%m/%d %H:%M"), END_TIME.strftime("%m/%d %H:%M"))
-    logger.info("SL=%dpips / TP=%dpips / 対象ペア=%s", SL_PIPS, TP_PIPS, PAIRS)
-    notify(f"**【シミュレーター開始】**\n期間: {START_TIME.strftime('%m/%d %H:%M')} 〜 {END_TIME.strftime('%m/%d %H:%M')} JST\nSL={SL_PIPS}pips / TP={TP_PIPS}pips")
+    logger.info("=== シミュレーター開始（PDCAモード）===")
+    logger.info("取引時間: %d:00〜%d:00 JST / SL=%dpips TP=%dpips",
+                TRADE_START_HOUR, TRADE_END_HOUR, SL_PIPS, TP_PIPS)
 
     while True:
         now = datetime.now(JST)
 
-        # 終了判定
-        if now >= END_TIME:
-            state = load_state()
-            if state["open_trade"]:
-                _force_close(state, client)
-            logger.info("=== シミュレーター終了 ===")
-            _print_summary()
-            notify("**【シミュレーター終了】** 結果を確認してください。")
-            break
+        # 取引時間外はスキップ
+        if not (TRADE_START_HOUR <= now.hour < TRADE_END_HOUR):
+            time.sleep(POLL_INTERVAL_SEC)
+            continue
 
-        state = load_state()
+        state      = load_state()
         open_trade = state.get("open_trade")
 
         for pair in PAIRS:
@@ -160,47 +174,67 @@ def run() -> None:
                 if not candles:
                     continue
 
-                ind = calc_indicators(candles)
-                current  = candles[-1].close
-                high     = candles[-1].high
-                low      = candles[-1].low
+                ind     = calc_indicators(candles)
+                current = candles[-1].close
+                high    = candles[-1].high
+                low     = candles[-1].low
 
                 if open_trade and open_trade["pair"] == pair:
-                    # TP/SL チェック
-                    result = _check_exit(open_trade, high, low, current, now)
+                    # --- TP/SL チェック ---
+                    result = _check_exit(open_trade, high, low)
                     if result:
-                        _close_trade(state, open_trade, result, current, now)
+                        closed = _close_trade(state, open_trade, result, current, now)
                         save_state({"open_trade": None})
+                        _run_check(closed)
+                        continue
+
+                    # --- 逆シグナル決済 ---
+                    rev_cond = _detect_condition(ind)
+                    if rev_cond:
+                        rev_key, _ = rev_cond
+                        rev_dir = CONDITION_DIRECTION.get(rev_key)
+                        if rev_dir and rev_dir != open_trade["direction"]:
+                            logger.info("逆シグナル検出 (%s) → 早期決済", rev_key)
+                            closed = _close_trade(state, open_trade, "SIGNAL_REVERSE", current, now)
+                            save_state({"open_trade": None})
+                            _run_check(closed)
 
                 elif open_trade is None:
-                    # エントリー判定
+                    # --- エントリー判断 ---
                     condition = _detect_condition(ind)
-                    if condition:
-                        key, _ = condition
-                        direction = CONDITION_DIRECTION.get(key)
-                        if direction:
-                            sl, tp = calc_sl_tp(pair, direction, current)
-                            trade = {
-                                "pair":        pair,
-                                "direction":   direction,
-                                "entry_price": current,
-                                "entry_time":  now.isoformat(),
-                                "sl_price":    round(sl, 5),
-                                "tp_price":    round(tp, 5),
-                                "condition":   key,
-                            }
-                            state["open_trade"] = trade
-                            save_state(state)
+                    if not condition:
+                        continue
 
-                            pair_label = pair.replace("_", "/")
-                            logger.info("エントリー: %s %s @ %.5f (SL=%.5f / TP=%.5f)", pair_label, direction, current, sl, tp)
-                            notify(
-                                f"**【エントリー】{pair_label} {direction}**\n"
-                                f"価格: {current:.5f}\n"
-                                f"SL: {sl:.5f} / TP: {tp:.5f}\n"
-                                f"条件: {key}\n"
-                                f"⏰ {now.strftime('%H:%M JST')}"
-                            )
+                    key, _ = condition
+                    direction = CONDITION_DIRECTION.get(key)
+                    if not direction:
+                        continue
+
+                    plan = _get_plan(pair)
+                    allowed, reason = _plan_allows_entry(plan, direction, now)
+                    if not allowed:
+                        logger.debug("%s: エントリースキップ (%s)", pair, reason)
+                        continue
+
+                    sl_pips, tp_pips = _get_sl_tp_pips(plan, direction)
+                    sl, tp = calc_sl_tp(pair, direction, current, sl_pips, tp_pips)
+
+                    trade = {
+                        "pair":        pair,
+                        "direction":   direction,
+                        "entry_price": current,
+                        "entry_time":  now.isoformat(),
+                        "sl_price":    round(sl, 5),
+                        "tp_price":    round(tp, 5),
+                        "condition":   key,
+                        "plan_bias":   plan.get("bias", "NEUTRAL"),
+                    }
+                    state["open_trade"] = trade
+                    save_state(state)
+
+                    pair_label = pair.replace("_", "/")
+                    logger.info("エントリー: %s %s @ %.5f (SL=%.5f / TP=%.5f) [Plan:%s]",
+                                pair_label, direction, current, sl, tp, plan.get("bias", "NEUTRAL"))
 
             except Exception as e:
                 logger.error("%s: エラー %s", pair, e)
@@ -208,83 +242,54 @@ def run() -> None:
         time.sleep(POLL_INTERVAL_SEC)
 
 
-def _check_exit(trade: dict, high: float, low: float, current: float, now: datetime) -> str | None:
+# ------------------------------------------------------------------
+# 決済
+# ------------------------------------------------------------------
+
+def _check_exit(trade: dict, high: float, low: float) -> str | None:
     direction = trade["direction"]
     sl = trade["sl_price"]
     tp = trade["tp_price"]
 
     if direction == "BUY":
-        if low <= sl:
-            return "SL"
-        if high >= tp:
-            return "TP"
+        if low  <= sl: return "SL"
+        if high >= tp: return "TP"
     else:
-        if high >= sl:
-            return "SL"
-        if low <= tp:
-            return "TP"
+        if high >= sl: return "SL"
+        if low  <= tp: return "TP"
     return None
 
 
-def _close_trade(state: dict, trade: dict, result: str, current: float, now: datetime) -> None:
-    exit_price = trade["tp_price"] if result == "TP" else trade["sl_price"]
-    pip = pip_value(trade["pair"])
-    direction = trade["direction"]
-
-    if direction == "BUY":
-        pips = round((exit_price - trade["entry_price"]) / pip)
+def _close_trade(state: dict, trade: dict, result: str, current: float, now: datetime) -> dict:
+    if result in ("TP", "SL"):
+        exit_price = trade["tp_price"] if result == "TP" else trade["sl_price"]
     else:
-        pips = round((trade["entry_price"] - exit_price) / pip)
+        exit_price = current  # SIGNAL_REVERSE は現在値で決済
 
-    closed = {**trade, "exit_price": exit_price, "exit_time": now.isoformat(), "result": result, "pips": pips}
+    pip     = pip_value(trade["pair"])
+    direction = trade["direction"]
+    pips    = round((exit_price - trade["entry_price"]) / pip) if direction == "BUY" \
+              else round((trade["entry_price"] - exit_price) / pip)
+
+    closed = {**trade, "exit_price": exit_price, "exit_time": now.isoformat(),
+              "result": result, "pips": pips}
     save_result(closed)
 
     pair_label = trade["pair"].replace("_", "/")
-    icon = "✅" if result == "TP" else "❌"
-    logger.info("決済: %s %s → %s %+dpips", pair_label, direction, result, pips)
-    notify(
-        f"**{icon} 【決済】{pair_label} {direction} → {result}**\n"
-        f"エントリー: {trade['entry_price']:.5f}\n"
-        f"決済: {exit_price:.5f}\n"
-        f"結果: {pips:+d} pips\n"
-        f"⏰ {now.strftime('%H:%M JST')}"
-    )
+    logger.info("決済: %s %s → %s %+dpips @ %.5f",
+                pair_label, direction, result, pips, exit_price)
+    return closed
 
 
-def _force_close(state: dict, client) -> None:
-    trade = state["open_trade"]
-    if not trade:
-        return
-    from src.data.client_factory import get_data_client
-    candles = get_data_client().get_candles(trade["pair"], "H1", 1)
-    current = candles[-1].close if candles else trade["entry_price"]
-    _close_trade(state, trade, "TIME", current, datetime.now(JST))
-    state["open_trade"] = None
-    save_state(state)
-
-
-def _print_summary() -> None:
-    results = load_results()
-    if not results:
-        logger.info("取引なし")
-        return
-
-    tp_count = sum(1 for r in results if r["result"] == "TP")
-    sl_count = sum(1 for r in results if r["result"] == "SL")
-    total_pips = sum(r["pips"] for r in results)
-
-    logger.info("=== 結果サマリー ===")
-    logger.info("総取引数: %d", len(results))
-    logger.info("TP: %d / SL: %d", tp_count, sl_count)
-    logger.info("合計pips: %+d", total_pips)
-
-    summary = (
-        f"**【シミュレーター結果】**\n"
-        f"総取引数: {len(results)}\n"
-        f"TP: {tp_count} / SL: {sl_count}\n"
-        f"合計: {total_pips:+d} pips"
-    )
-    notify(summary)
+def _run_check(trade: dict) -> None:
+    """決済後にCheckフェーズを自動実行"""
+    try:
+        from src.ai.checker import run_check
+        result = run_check(trade)
+        if result:
+            logger.info("Check完了: bias_correct=%s | %s", result.bias_correct, result.cause)
+    except Exception as e:
+        logger.error("Check実行失敗: %s", e)
 
 
 if __name__ == "__main__":
