@@ -8,7 +8,7 @@ Type=simple
 User=root
 WorkingDirectory=/opt/fxautobuy
 EnvironmentFile=/opt/fxautobuy/.env
-ExecStart=/usr/bin/python3 scripts/background_worker.py
+ExecStart=/opt/fxautobuy/venv/bin/python3 scripts/sim_runner.py
 Restart=always
 RestartSec=10
 
