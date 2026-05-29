@@ -41,43 +41,18 @@ _SYSTEM_PROMPT = """\
   "technical": "テクニカル視点の分析（H1でトレンド確認、M5でエントリー状況を説明）",
   "bias": "BUY" または "SELL" または "NEUTRAL",
   "avoid_until": null または "2026-05-21T21:45:00+09:00"（高インパクト指標の禁止期間終了時刻・ISO形式）,
-  "plans": [
-    {
-      "label": "A",
-      "condition": "最優先エントリー条件（具体的なテクニカル条件）",
-      "entry": "BUY" または "SELL" または "HOLD",
-      "sl_pips": 10,
-      "tp_pips": 20,
-      "notes": "補足・注意事項"
-    },
-    {
-      "label": "B",
-      "condition": "サブシナリオの条件",
-      "entry": "BUY" または "SELL" または "HOLD",
-      "sl_pips": 12,
-      "tp_pips": 24,
-      "notes": "補足・注意事項"
-    },
-    {
-      "label": "C",
-      "condition": "上記が揃わない場合",
-      "entry": "HOLD",
-      "sl_pips": null,
-      "tp_pips": null,
-      "notes": "見送り条件"
-    }
-  ]
+  "sl_pips": 10,
+  "tp_pips": 20,
+  "entry_note": "エントリー根拠・現在の価格水準・注意事項を1〜2文で"
 }
 ```
 
 ## 判断基準
-- **トレンド確認**: H1足でトレンド方向を決定し、M5足でエントリータイミングを探す
+- **トレンド確認**: H1足でトレンド方向を決定し、M5足でエントリー状況を確認する
 - **bias**: H1のトレンドが優位な方向。上位足と短期足が矛盾している・レンジ相場の場合はNEUTRAL
 - **SL/TP目安（スキャル）**: SL 8〜15pips / TP 16〜30pips（RR 1:2以上を維持）
 - **avoid_until**: 高インパクト経済指標がある場合、発表30分前〜発表後15分の終了時刻を設定する
-- **Plan A**: 最も確度が高いシナリオ。条件が揃い次第エントリー
-- **Plan B**: AのサブシナリオまたはAが不発の場合の代替案
-- **Plan C**: 見送り条件（上記が揃わない場合は無理にエントリーしない）
+- biasがBUY/SELLの場合、このセッション中に即エントリーが実行される。確信が持てない場合はNEUTRALにすること
 - 上位足トレンドと逆方向のエントリーは原則禁止
 """
 
@@ -89,7 +64,9 @@ class PlanResult:
     technical:   str
     bias:        str              # "BUY" | "SELL" | "NEUTRAL"
     avoid_until: str | None       # ISO timestamp or None
-    plans:       list[dict] = field(default_factory=list)
+    sl_pips:     int = 10
+    tp_pips:     int = 20
+    entry_note:  str = ""
     pair:        str = ""
     timestamp:   str = ""
 
@@ -226,7 +203,7 @@ def _parse_plan(raw: str, pair: str, session: str) -> PlanResult:
         logger.warning("Planレスポンス解析失敗: %s", raw[:200])
         return PlanResult(
             session=session, fundamental="解析失敗", technical="解析失敗",
-            bias="NEUTRAL", avoid_until=None, plans=[], pair=pair, timestamp=now_str,
+            bias="NEUTRAL", avoid_until=None, pair=pair, timestamp=now_str,
         )
 
     bias = data.get("bias", "NEUTRAL")
@@ -239,7 +216,9 @@ def _parse_plan(raw: str, pair: str, session: str) -> PlanResult:
         technical=data.get("technical", ""),
         bias=bias,
         avoid_until=data.get("avoid_until"),
-        plans=data.get("plans", []),
+        sl_pips=int(data.get("sl_pips") or 10),
+        tp_pips=int(data.get("tp_pips") or 20),
+        entry_note=data.get("entry_note", ""),
         pair=pair,
         timestamp=now_str,
     )
@@ -271,7 +250,7 @@ def run_plan(
         logger.error("Plan API呼び出し失敗 %s: %s", pair, e)
         plan = PlanResult(
             session=session, fundamental="", technical="",
-            bias="NEUTRAL", avoid_until=None, plans=[],
+            bias="NEUTRAL", avoid_until=None,
             pair=pair, timestamp=datetime.now(JST).isoformat(),
         )
 
