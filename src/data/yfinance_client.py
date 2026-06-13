@@ -40,6 +40,9 @@ _PAIR_MAP: dict[str, str] = {
     "GBP_USD": "GBPUSD=X",
     "EUR_JPY": "EURJPY=X",
     "AUD_USD": "AUDUSD=X",
+    "AUD_JPY": "AUDJPY=X",
+    "GBP_JPY": "GBPJPY=X",
+    "EUR_GBP": "EURGBP=X",
 }
 
 # OANDA粒度 → yfinance interval 変換

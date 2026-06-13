@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import oandapyV20
@@ -120,6 +120,63 @@ class OandaClient:
                 volume=int(c["volume"]),
             ))
         return result
+
+    def get_candles_range(
+        self,
+        pair: str,
+        granularity: str,
+        start: datetime,
+        end: datetime,
+        page_size: int = 5000,
+    ) -> list[Candle]:
+        """指定期間の全ローソク足をページネーションで取得"""
+        _gran_seconds = {
+            "M1": 60, "M5": 300, "M15": 900, "M30": 1800,
+            "H1": 3600, "H4": 14400, "D": 86400,
+        }
+        step = timedelta(seconds=_gran_seconds.get(granularity, 300) * page_size)
+
+        all_candles: list[Candle] = []
+        current = start.replace(tzinfo=timezone.utc) if start.tzinfo is None else start
+
+        while current < end:
+            params = {
+                "granularity": granularity,
+                "from": current.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "count": page_size,
+                "price": "M",
+            }
+            req = instruments.InstrumentsCandles(instrument=pair, params=params)
+            resp = self._client.request(req)
+
+            batch: list[Candle] = []
+            for c in resp["candles"]:
+                if not c["complete"]:
+                    continue
+                mid = c["mid"]
+                t = datetime.fromisoformat(c["time"].replace("Z", "+00:00"))
+                if t >= end:
+                    break
+                batch.append(Candle(
+                    time=t,
+                    open=float(mid["o"]),
+                    high=float(mid["h"]),
+                    low=float(mid["l"]),
+                    close=float(mid["c"]),
+                    volume=int(c["volume"]),
+                ))
+
+            if not batch:
+                break
+
+            all_candles.extend(batch)
+
+            if len(batch) < page_size:
+                break
+
+            current = batch[-1].time + timedelta(seconds=_gran_seconds.get(granularity, 300))
+
+        return all_candles
 
     def get_multi_granularity_candles(
         self,

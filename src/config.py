@@ -25,7 +25,8 @@ AI_PROVIDER       = os.getenv("AI_PROVIDER", "claude")  # groq | claude | gemini
 GROQ_API_KEY      = os.getenv("GROQ_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 GEMINI_API_KEY    = os.getenv("GEMINI_API_KEY", "")
-FINNHUB_API_KEY   = os.getenv("FINNHUB_API_KEY", "")
+FINNHUB_API_KEY        = os.getenv("FINNHUB_API_KEY", "")
+ALPHA_VANTAGE_API_KEY  = os.getenv("ALPHA_VANTAGE_API_KEY", "")
 
 # --- ハイブリッドモデル設定 ---
 _MODELS = {

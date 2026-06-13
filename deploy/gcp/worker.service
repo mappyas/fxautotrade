@@ -1,5 +1,5 @@
 [Unit]
-Description=FX AutoBuy Background Worker
+Description=FX AutoBuy BB Range Reversal Runner
 After=network.target
 Wants=network-online.target
 
@@ -8,7 +8,7 @@ Type=simple
 User=root
 WorkingDirectory=/opt/fxautobuy
 EnvironmentFile=/opt/fxautobuy/.env
-ExecStart=/opt/fxautobuy/venv/bin/python3 scripts/monitor.py
+ExecStart=/opt/fxautobuy/venv/bin/python3 scripts/sim_runner.py
 Restart=always
 RestartSec=10
 

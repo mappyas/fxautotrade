@@ -21,34 +21,21 @@ venv/bin/pip install -r requirements.txt
 
 # 環境変数ファイルを作成（値は後で編集）
 cat > /opt/fxautobuy/.env << 'EOF'
-AI_PROVIDER=claude
 DATA_SOURCE=yfinance
-ANTHROPIC_API_KEY=your_key_here
 DISCORD_WEBHOOK_URL=your_webhook_here
 EOF
 
 # data ディレクトリ作成
 mkdir -p /opt/fxautobuy/data
 
-# cron 設定（JST → UTC 変換）
-# 08:30 JST = 23:30 UTC (前日)
-# 15:30 JST = 06:30 UTC
-# 20:30 JST = 11:30 UTC
-# 23:00 JST = 14:00 UTC
-# plan_job cron（JST → UTC）
-# 08:30 JST = 23:30 UTC / 15:30 JST = 06:30 UTC / 20:30 JST = 11:30 UTC / 23:00 JST = 14:00 UTC
-PLAN_CMD="/opt/fxautobuy/venv/bin/python3 /opt/fxautobuy/scripts/plan_job.py >> /opt/fxautobuy/data/plan_job.log 2>&1"
-(crontab -l 2>/dev/null; echo "30 23 * * * $PLAN_CMD") | crontab -
-(crontab -l 2>/dev/null; echo "30  6 * * * $PLAN_CMD") | crontab -
-(crontab -l 2>/dev/null; echo "30 11 * * * $PLAN_CMD") | crontab -
-(crontab -l 2>/dev/null; echo " 0 14 * * * $PLAN_CMD") | crontab -
-
-# check_job cron（23:30 JST = 14:30 UTC）
-CHECK_CMD="/opt/fxautobuy/venv/bin/python3 /opt/fxautobuy/scripts/check_job.py >> /opt/fxautobuy/data/check_job.log 2>&1"
-(crontab -l 2>/dev/null; echo "30 14 * * * $CHECK_CMD") | crontab -
+# systemd サービス登録
+sudo cp /opt/fxautobuy/deploy/gcp/worker.service /etc/systemd/system/fxautobuy.service
+sudo systemctl daemon-reload
+sudo systemctl enable fxautobuy
+sudo systemctl start fxautobuy
 
 echo "=== セットアップ完了 ==="
-echo "次のステップ: nano /opt/fxautobuy/.env でAPIキーを設定してください"
+echo "次のステップ: nano /opt/fxautobuy/.env でAPIキーを設定後、sudo systemctl restart fxautobuy"
 echo ""
-echo "設定済みcron:"
-crontab -l
+echo "ステータス確認: sudo systemctl status fxautobuy"
+echo "ログ確認:       tail -f /opt/fxautobuy/data/sim_runner.log"
