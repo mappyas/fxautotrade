@@ -69,7 +69,7 @@ def _load_state() -> dict:
             return json.loads(STATE_FILE.read_text(encoding="utf-8"))
         except Exception:
             pass
-    return {p: {"open_trade": None, "last_bar": None, "daily_losses": {}} for p in PAIRS}
+    return {p: {"open_trade": None, "last_entry_bar": None, "daily_losses": {}} for p in PAIRS}
 
 
 def _save_state(state: dict) -> None:
@@ -108,16 +108,16 @@ def _notify(msg: str) -> None:
 # ------------------------------------------------------------------
 
 def _try_entry(pair: str, candles: list, pair_state: dict, now: datetime) -> dict:
-    from src.trading.signal_engine import detect_range_reversal
+    from src.trading.signal_engine import detect_range_reversal_live
 
-    bar_time = candles[-1].time.isoformat()
-
-    # 同じ足で二重エントリーしない
-    if pair_state.get("last_bar") == bar_time:
-        return pair_state
+    live_bar_time = candles[-1].time.isoformat()
 
     # オープントレードがあれば新規エントリーしない
     if pair_state.get("open_trade"):
+        return pair_state
+
+    # 同じ H1 バーでシグナルが既に発生済みなら再エントリーしない
+    if pair_state.get("last_entry_bar") == live_bar_time:
         return pair_state
 
     # 当日連敗上限チェック
@@ -127,7 +127,7 @@ def _try_entry(pair: str, candles: list, pair_state: dict, now: datetime) -> dic
         logger.info("%s: 当日連敗上限(%d)到達 → スキップ", pair, MAX_DAILY_LOSSES)
         return pair_state
 
-    signal = detect_range_reversal(
+    signal = detect_range_reversal_live(
         candles, pair,
         adx_threshold=ADX_THRESHOLD,
         rsi_ob=RSI_OB,
@@ -136,10 +136,11 @@ def _try_entry(pair: str, candles: list, pair_state: dict, now: datetime) -> dic
         rr_min=RR_MIN,
     )
 
-    pair_state["last_bar"] = bar_time
-
     if signal is None:
-        return pair_state
+        return pair_state  # タッチ未検出 → 次のポーリングで再チェック
+
+    # シグナル発生時のみ記録（次のポーリングで二重エントリー防止）
+    pair_state["last_entry_bar"] = live_bar_time
 
     # スプレッドを入口に加算
     pip = 0.01 if pair.endswith("JPY") else 0.0001
@@ -264,7 +265,7 @@ def run() -> None:
 
         for pair in PAIRS:
             pair_state = state.setdefault(
-                pair, {"open_trade": None, "last_bar": None, "daily_losses": {}}
+                pair, {"open_trade": None, "last_entry_bar": None, "daily_losses": {}}
             )
             try:
                 candles = client.get_candles(pair, TF, CANDLE_COUNT)

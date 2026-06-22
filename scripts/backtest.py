@@ -79,6 +79,18 @@ class BacktestConfig:
     max_daily_losses: int = 2
 
 
+@dataclass
+class TrendConfig:
+    label: str
+    adx_min:       float | None = 25.0  # None = ADX フィルターなし
+    slope_pips:    float = 2.0          # MA75 が N pips/slope_bars 以上動いていること
+    slope_bars:    int   = 10
+    sl_buf_pips:   float = 5.0
+    rr_min:        float = 2.0
+    spread_pips:   float = 0.7
+    max_daily_losses: int = 2
+
+
 # ------------------------------------------------------------------
 # データ取得（yfinance・キャッシュあり）
 # ------------------------------------------------------------------
@@ -259,6 +271,216 @@ def precompute(candles, bb_period=20, rsi_period=14, adx_period=14, ma_period=75
                 adx_v[cidx] = adx_val
 
     return bb_up, bb_mid, bb_lo, rsi_v, adx_v, ma75_v
+
+
+# ------------------------------------------------------------------
+# トレンド戦略 事前計算 / シミュレーション
+# ------------------------------------------------------------------
+
+def precompute_trend(candles, ma_fast=5, ma_mid=20, ma_slow=75, adx_period=14):
+    """MA5 / MA20 / MA75 / ADX を一括計算"""
+    n = len(candles)
+    closes = [c.close for c in candles]
+    highs  = [c.high  for c in candles]
+    lows   = [c.low   for c in candles]
+
+    def _ma(period):
+        arr = [None] * n
+        for i in range(period - 1, n):
+            arr[i] = sum(closes[i - period + 1 : i + 1]) / period
+        return arr
+
+    mf_v  = _ma(ma_fast)
+    mm_v  = _ma(ma_mid)
+    ms_v  = _ma(ma_slow)
+
+    # ADX（BB 戦略と同じ 2 段階 Wilder's）
+    adx_v = [None] * n
+    if n >= adx_period * 2 + 1:
+        trs, pdms, mdms = [], [], []
+        for i in range(1, n):
+            tr = max(highs[i]-lows[i], abs(highs[i]-closes[i-1]), abs(lows[i]-closes[i-1]))
+            up   = highs[i] - highs[i-1]
+            down = lows[i-1] - lows[i]
+            trs.append(tr)
+            pdms.append(up   if (up   > down and up   > 0) else 0.0)
+            mdms.append(down if (down > up   and down > 0) else 0.0)
+
+        s_tr  = sum(trs[:adx_period])  / adx_period
+        s_pdm = sum(pdms[:adx_period]) / adx_period
+        s_mdm = sum(mdms[:adx_period]) / adx_period
+        dx_series = [(adx_period, _dx(s_tr, s_pdm, s_mdm))]
+        for j in range(adx_period, len(trs)):
+            s_tr  = (s_tr  * (adx_period-1) + trs[j])  / adx_period
+            s_pdm = (s_pdm * (adx_period-1) + pdms[j]) / adx_period
+            s_mdm = (s_mdm * (adx_period-1) + mdms[j]) / adx_period
+            dx_series.append((j+1, _dx(s_tr, s_pdm, s_mdm)))
+        if len(dx_series) >= adx_period:
+            adx_val = sum(dx for _, dx in dx_series[:adx_period]) / adx_period
+            adx_v[dx_series[adx_period-1][0]] = adx_val
+            for k in range(adx_period, len(dx_series)):
+                cidx, dx = dx_series[k]
+                adx_val = (adx_val * (adx_period-1) + dx) / adx_period
+                adx_v[cidx] = adx_val
+
+    return mf_v, mm_v, ms_v, adx_v
+
+
+def simulate_trend(candles, pair, mf_v, mm_v, ms_v, adx_v, cfg: TrendConfig) -> list[dict]:
+    pip    = 0.01 if pair.endswith("JPY") else 0.0001
+    cost   = cfg.spread_pips * pip
+    sl_buf = cfg.sl_buf_pips * pip
+
+    trades: list[dict] = []
+    in_trade = False
+    trade: dict = {}
+    daily_losses: dict[str, int] = {}
+
+    def jst_date(dt) -> str:
+        return (dt + timedelta(hours=9)).strftime("%Y-%m-%d")
+
+    n = len(candles)
+    for i in range(2, n):
+        c   = candles[i]
+        day = jst_date(c.time)
+
+        # ---- 決済チェック ----
+        if in_trade:
+            result = exit_price = None
+            if trade["dir"] == "BUY":
+                if c.low  <= trade["sl"]: result, exit_price = "SL", trade["sl"]
+                elif c.high >= trade["tp"]: result, exit_price = "TP", trade["tp"]
+            else:
+                if c.high >= trade["sl"]: result, exit_price = "SL", trade["sl"]
+                elif c.low  <= trade["tp"]: result, exit_price = "TP", trade["tp"]
+
+            h = (c.time + timedelta(hours=9)).hour
+            m = (c.time + timedelta(hours=9)).minute
+            if result is None and h == 23 and m >= 55:
+                result, exit_price = "EOD", c.close
+
+            if result:
+                pips = (exit_price - trade["entry"]) / pip if trade["dir"] == "BUY" \
+                       else (trade["entry"] - exit_price) / pip
+                entry_day = jst_date(candles[trade["bar"]].time)
+                if result == "SL":
+                    daily_losses[entry_day] = daily_losses.get(entry_day, 0) + 1
+                trades.append({
+                    "entry_time": candles[trade["bar"]].time.isoformat(),
+                    "exit_time":  c.time.isoformat(),
+                    "pair": pair, "direction": trade["dir"],
+                    "entry": trade["entry"], "exit": exit_price,
+                    "sl": trade["sl"], "tp": trade["tp"],
+                    "result": result, "pips": round(pips, 1),
+                    "session": _session(candles[trade["bar"]].time),
+                })
+                in_trade = False
+            continue
+
+        if daily_losses.get(day, 0) >= cfg.max_daily_losses:
+            continue
+
+        i_s = i - 2
+        i_c = i - 1
+
+        if any(v is None for v in [mf_v[i_s], mm_v[i_s], ms_v[i_s]]):
+            continue
+
+        # ADX フィルター
+        if cfg.adx_min is not None:
+            if adx_v[i_s] is None or adx_v[i_s] < cfg.adx_min:
+                continue
+
+        mf, mm, ms = mf_v[i_s], mm_v[i_s], ms_v[i_s]
+        setup   = candles[i_s]
+        confirm = candles[i_c]
+        entry_c = candles[i]
+
+        # MA75 傾き
+        j_prev = i_s - cfg.slope_bars
+        if j_prev < 0 or ms_v[j_prev] is None:
+            continue
+        slope = (ms - ms_v[j_prev]) / pip
+
+        direction = None
+        if (mf > mm > ms
+                and slope >= cfg.slope_pips
+                and setup.low  <= mm          # MA20 まで押した
+                and setup.low  >= ms - sl_buf  # MA75 を大きく割っていない
+                and confirm.close > confirm.open  # 陽線
+                and confirm.close >= mm):          # MA20 を回復
+            direction = "BUY"
+        elif (mf < mm < ms
+                and slope <= -cfg.slope_pips
+                and setup.high >= mm
+                and setup.high <= ms + sl_buf
+                and confirm.close < confirm.open
+                and confirm.close <= mm):
+            direction = "SELL"
+
+        if direction is None:
+            continue
+
+        if direction == "BUY":
+            entry = entry_c.open + cost
+            sl    = setup.low - sl_buf   # 押し目の直下
+            sl_d  = entry - sl
+            tp    = entry + cfg.rr_min * sl_d
+        else:
+            entry = entry_c.open - cost
+            sl    = setup.high + sl_buf  # 戻り高値の直上
+            sl_d  = sl - entry
+            tp    = entry - cfg.rr_min * sl_d
+
+        if sl_d <= 0:
+            continue
+
+        in_trade = True
+        trade = {"dir": direction, "entry": round(entry,5),
+                 "sl": round(sl,5), "tp": round(tp,5), "bar": i}
+
+    return trades
+
+
+def run_trend_grid(candles, pair: str, configs: list[TrendConfig]) -> list[dict]:
+    mf_v, mm_v, ms_v, adx_v = precompute_trend(candles)
+
+    t_start = candles[0].time.strftime("%Y-%m-%d")
+    t_end   = candles[-1].time.strftime("%Y-%m-%d")
+    split   = int(len(candles) * 0.6)
+
+    print(f"\n{'#' * 66}")
+    print(f"# {pair} [TREND]  |  {t_start} 〜 {t_end}  ({len(candles):,} 本)")
+    print(f"{'#' * 66}")
+    print(f"  ウォークフォワード: 前半60% インサンプル / 後半40% OOS")
+
+    rows = []
+    for cfg in configs:
+        tr_all = simulate_trend(candles, pair, mf_v, mm_v, ms_v, adx_v, cfg)
+        b2 = [mf_v[:split], mm_v[:split], ms_v[:split], adx_v[:split]]
+        tr_in  = simulate_trend(candles[:split], pair, *b2, cfg)
+        b3 = [mf_v[split:], mm_v[split:], ms_v[split:], adx_v[split:]]
+        tr_out = simulate_trend(candles[split:], pair, *b3, cfg)
+
+        rows.append({"cfg": cfg, "all": calc_stats(tr_all),
+                     "in": calc_stats(tr_in), "out": calc_stats(tr_out),
+                     "trades": tr_all})
+
+    _print_grid_table(rows)
+    return rows
+
+
+def default_trend_grid(spread_pips: float) -> list[TrendConfig]:
+    kw = {"spread_pips": spread_pips}
+    return [
+        TrendConfig("ADXなし  RR2",   adx_min=None, rr_min=2.0, **kw),
+        TrendConfig("ADX>20  RR2",    adx_min=20.0, rr_min=2.0, **kw),
+        TrendConfig("ADX>25  RR2",    adx_min=25.0, rr_min=2.0, **kw),
+        TrendConfig("ADX>30  RR2",    adx_min=30.0, rr_min=2.0, **kw),
+        TrendConfig("ADX>25  RR3",    adx_min=25.0, rr_min=3.0, **kw),
+        TrendConfig("ADX>25  SL10",   adx_min=25.0, sl_buf_pips=10.0, rr_min=2.0, **kw),
+        TrendConfig("ADX>25  slope5", adx_min=25.0, slope_pips=5.0, rr_min=2.0, **kw),
+    ]
 
 
 # ------------------------------------------------------------------
@@ -740,8 +962,12 @@ def main() -> None:
     parser.add_argument("--days", type=int, default=None,
                         help="直近 N 日のみ使用（例: --days 60）")
     parser.add_argument("--no-cache", action="store_true")
+    parser.add_argument("--strategy", default="bb", choices=["bb", "trend"],
+                        help="戦略 (bb=BBレンジ逆張り / trend=MAパーフェクトオーダー順張り)")
     parser.add_argument("--grid", default="default", choices=["default", "adx", "rsi", "best"],
                         help="グリッド種別 (default=ver0.2 / adx=ADX / rsi=RSI / best=最適設定単一)")
+    parser.add_argument("--csv", action="store_true",
+                        help="トレード明細を CSV で出力")
     parser.add_argument("--detail", action="store_true",
                         help="ベスト設定の詳細レポートも表示")
     args = parser.parse_args()
@@ -797,15 +1023,20 @@ def main() -> None:
             logger.info("直近 %d 日に絞り込み: %d 本", args.days, len(candles))
 
         spread = SPREAD_PIPS.get(pair, 0.7)
-        if args.grid == "adx":
-            configs = adx_sweep_grid(spread)
-        elif args.grid == "rsi":
-            configs = rsi_sweep_grid(spread)
-        elif args.grid == "best":
-            configs = best_config(spread)
+
+        if args.strategy == "trend":
+            configs = default_trend_grid(spread)
+            rows = run_trend_grid(candles, pair, configs)
         else:
-            configs = default_grid(spread)
-        rows = run_grid(candles, pair, configs)
+            if args.grid == "adx":
+                configs = adx_sweep_grid(spread)
+            elif args.grid == "rsi":
+                configs = rsi_sweep_grid(spread)
+            elif args.grid == "best":
+                configs = best_config(spread)
+            else:
+                configs = default_grid(spread)
+            rows = run_grid(candles, pair, configs)
 
         # --detail: 最もPFが高い設定の詳細
         if args.detail and rows:
@@ -821,6 +1052,40 @@ def main() -> None:
         encoding="utf-8",
     )
     print(f"\n結果保存: {RESULTS_FILE}")
+
+    if args.csv:
+        label = f"_{args.pair}" if args.pair not in ("both", "all", "cross") else ""
+        _export_csv(all_trades, label)
+
+
+def _export_csv(trades: list[dict], suffix: str = "") -> None:
+    import csv
+    name = f"backtest_results{suffix}.csv"
+    csv_file = RESULTS_FILE.parent / name
+    fields = [
+        "pair", "direction", "result",
+        "entry_time", "exit_time",
+        "entry", "sl", "tp", "exit",
+        "pips", "session",
+    ]
+    with csv_file.open("w", newline="", encoding="utf-8-sig") as f:
+        w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
+        w.writeheader()
+        for t in trades:
+            w.writerow({
+                "pair":       t.get("pair", ""),
+                "direction":  t.get("direction", ""),
+                "result":     t.get("result", ""),
+                "entry_time": t.get("entry_time", ""),
+                "exit_time":  t.get("exit_time", ""),
+                "entry":      t.get("entry", ""),
+                "sl":         t.get("sl", ""),
+                "tp":         t.get("tp", ""),
+                "exit":       t.get("exit", ""),
+                "pips":       t.get("pips", ""),
+                "session":    t.get("session", ""),
+            })
+    print(f"CSV出力: {csv_file}  ({len(trades)} 件)")
 
 
 if __name__ == "__main__":

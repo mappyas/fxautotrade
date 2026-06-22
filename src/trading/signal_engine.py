@@ -26,6 +26,17 @@ from src.data.oanda_client import Candle
 # ------------------------------------------------------------------
 
 @dataclass
+class TrendSignal:
+    direction:    str
+    entry_price:  float
+    sl_price:     float
+    tp_price:     float
+    rr:           float
+    setup_time:   str
+    confirm_time: str
+
+
+@dataclass
 class RangeSignal:
     direction:    str    # "BUY" | "SELL"
     entry_price:  float
@@ -216,6 +227,214 @@ def detect_range_reversal(
         sl_price=round(sl, 5),
         tp_price=round(tp, 5),
         rr=round(tp_d / sl_d, 2),
+        setup_time=setup_bar.time.isoformat(),
+        confirm_time=confirm_bar.time.isoformat(),
+    )
+
+
+# ------------------------------------------------------------------
+# ライブ専用: H1 バー内リアルタイムタッチ検出
+# ------------------------------------------------------------------
+
+def detect_range_reversal_live(
+    candles: list[Candle],
+    pair: str,
+    bb_period: int = 20,
+    adx_period: int = 14,
+    rsi_period: int = 14,
+    adx_threshold: float = 30.0,
+    rsi_ob: float = 65.0,
+    rsi_os: float = 35.0,
+    sl_buffer_pips: float = 2.0,
+    rr_min: float = 2.0,
+) -> RangeSignal | None:
+    """
+    2バーパターン（ライブランナー専用）
+
+    candles[-2]: 直近確定 H1 バー  — 指標算出・ADX/RSI フィルター
+    candles[-1]: 現在進行中の H1 バー  — BB タッチをリアルタイム判定
+                  BUY : live_bar.low  <= bb_lower
+                  SELL: live_bar.high >= bb_upper
+
+    指標は candles[:-1]（確定済み足のみ）で計算。
+    エントリー価格 = live_bar.open（バー開始時点の価格）
+    """
+    min_len = max(bb_period, adx_period * 2 + 1, rsi_period + 1) + 2
+    if len(candles) < min_len:
+        return None
+
+    pip = 0.01 if pair.endswith("JPY") else 0.0001
+
+    live_bar   = candles[-1]
+    closed_data = candles[:-1]
+    closes = [c.close for c in closed_data]
+
+    bb  = calc_bb(closes, bb_period)
+    rsi = calc_rsi(closes, rsi_period)
+    adx = calc_adx(closed_data, adx_period)
+
+    if bb is None or rsi is None or adx is None:
+        return None
+
+    bb_upper, bb_middle, bb_lower = bb
+
+    direction = None
+
+    if (adx < adx_threshold
+            and rsi <= rsi_os
+            and live_bar.low <= bb_lower):
+        direction = "BUY"
+
+    elif (adx < adx_threshold
+          and rsi >= rsi_ob
+          and live_bar.high >= bb_upper):
+        direction = "SELL"
+
+    if direction is None:
+        return None
+
+    entry  = live_bar.open
+    sl_buf = sl_buffer_pips * pip
+
+    if direction == "BUY":
+        sl   = bb_lower - sl_buf
+        tp   = bb_middle
+        sl_d = entry - sl
+        tp_d = tp - entry
+    else:
+        sl   = bb_upper + sl_buf
+        tp   = bb_middle
+        sl_d = sl - entry
+        tp_d = entry - tp
+
+    if sl_d <= 0 or tp_d <= 0 or tp_d / sl_d < rr_min:
+        return None
+
+    context_bar = candles[-2]
+    return RangeSignal(
+        direction=direction,
+        entry_price=round(entry, 5),
+        sl_price=round(sl, 5),
+        tp_price=round(tp, 5),
+        rr=round(tp_d / sl_d, 2),
+        setup_time=context_bar.time.isoformat(),
+        confirm_time=live_bar.time.isoformat(),
+    )
+
+
+# ------------------------------------------------------------------
+# Case 2: MA パーフェクトオーダー 押し目順張り
+# ------------------------------------------------------------------
+
+def calc_ma(closes: list[float], period: int) -> float | None:
+    if len(closes) < period:
+        return None
+    return sum(closes[-period:]) / period
+
+
+def detect_trend_followup(
+    candles: list[Candle],
+    pair: str,
+    ma_fast: int = 5,
+    ma_mid: int = 20,
+    ma_slow: int = 75,
+    slope_bars: int = 10,
+    slope_pips: float = 2.0,
+    adx_min: float | None = 25.0,
+    sl_buffer_pips: float = 5.0,
+    rr_min: float = 2.0,
+) -> TrendSignal | None:
+    """
+    MA パーフェクトオーダー + 押し目 でエントリー
+
+    setup バー（candles[-3]）:
+      BUY : MA_fast > MA_mid > MA_slow（上昇オーダー）
+            MA_slow が上向き
+            安値が MA_slow 〜 MA_mid ゾーンに触れた
+      SELL: 逆
+
+    confirm バー（candles[-2]）: 陽線 / 陰線
+
+    エントリー（candles[-1]）: 次足 open
+
+    SL: MA_slow - バッファ（BUY）
+    TP: entry + rr * SL 幅
+    """
+    min_len = ma_slow + slope_bars + 3
+    if len(candles) < min_len:
+        return None
+
+    pip = 0.01 if pair.endswith("JPY") else 0.0001
+
+    setup_bar   = candles[-3]
+    confirm_bar = candles[-2]
+    entry_bar   = candles[-1]
+
+    setup_data = candles[:-2]
+    closes = [c.close for c in setup_data]
+
+    mf = calc_ma(closes, ma_fast)
+    mm = calc_ma(closes, ma_mid)
+    ms = calc_ma(closes, ma_slow)
+
+    if mf is None or mm is None or ms is None:
+        return None
+
+    # MA75 傾き（直近 slope_bars 本の変化）
+    ms_prev = calc_ma(closes[:-slope_bars], ma_slow)
+    if ms_prev is None:
+        return None
+    slope = (ms - ms_prev) / pip  # pips 換算
+
+    # ADX フィルター（任意）
+    if adx_min is not None:
+        adx = calc_adx(list(setup_data), 14)
+        if adx is None or adx < adx_min:
+            return None
+
+    direction = None
+    sl_buf = sl_buffer_pips * pip
+
+    # BUY 判定
+    if (mf > mm > ms
+            and slope >= slope_pips
+            and setup_bar.low <= mm
+            and setup_bar.low >= ms - sl_buf
+            and confirm_bar.close > confirm_bar.open
+            and confirm_bar.close >= ms):
+        direction = "BUY"
+
+    # SELL 判定
+    elif (mf < mm < ms
+            and slope <= -slope_pips
+            and setup_bar.high >= mm
+            and setup_bar.high <= ms + sl_buf
+            and confirm_bar.close < confirm_bar.open
+            and confirm_bar.close <= ms):
+        direction = "SELL"
+
+    if direction is None:
+        return None
+
+    entry = entry_bar.open
+    if direction == "BUY":
+        sl   = ms - sl_buf
+        sl_d = entry - sl
+        tp   = entry + rr_min * sl_d
+    else:
+        sl   = ms + sl_buf
+        sl_d = sl - entry
+        tp   = entry - rr_min * sl_d
+
+    if sl_d <= 0:
+        return None
+
+    return TrendSignal(
+        direction=direction,
+        entry_price=round(entry, 5),
+        sl_price=round(sl, 5),
+        tp_price=round(tp, 5),
+        rr=rr_min,
         setup_time=setup_bar.time.isoformat(),
         confirm_time=confirm_bar.time.isoformat(),
     )
