@@ -78,6 +78,9 @@ class BacktestConfig:
     spread_pips:  float = 0.7
     max_daily_losses: int = 2
 
+    # タッチエントリーモード: 確認足なし、エントリー = バンドレベル
+    touch_entry:  bool  = False
+
 
 @dataclass
 class TrendConfig:
@@ -592,8 +595,9 @@ def simulate(
             continue
 
         # ---- ADX ヒステリシス状態管理 ----
+        adx_ref = i - 1 if cfg.touch_entry else i - 2
         if cfg.adx_enter is not None:
-            adx_now = adx_v[i - 2]
+            adx_now = adx_v[adx_ref]
             if adx_now is None:
                 continue
             if not in_range and adx_now < cfg.adx_enter:
@@ -604,8 +608,12 @@ def simulate(
                 continue
 
         # ---- シグナル検出 ----
-        i_s = i - 2   # setup バー
-        i_c = i - 1   # confirm バー
+        if cfg.touch_entry:
+            # タッチエントリー: setup = 前足、確認足なし、エントリー = バンドレベル
+            i_s = i - 1
+        else:
+            i_s = i - 2   # setup バー
+        i_c = i - 1   # confirm バー（touch_entry 時は使わない）
 
         if bb_up[i_s] is None or rsi_v[i_s] is None:
             continue
@@ -631,7 +639,6 @@ def simulate(
                 continue
 
         setup   = candles[i_s]
-        confirm = candles[i_c]
         entry_c = candles[i]
 
         # ---- 時間帯フィルター ----
@@ -640,26 +647,35 @@ def simulate(
                 continue
 
         direction = None
-        if (rsi_v[i_s] <= cfg.rsi_os
-                and setup.low <= bb_lo[i_s]
-                and confirm.close > confirm.open):
-            direction = "BUY"
-        elif (rsi_v[i_s] >= cfg.rsi_ob
-              and setup.high >= bb_up[i_s]
-              and confirm.close < confirm.open):
-            direction = "SELL"
+        if cfg.touch_entry:
+            # 確認足なし: バンドタッチのみで判定
+            if rsi_v[i_s] <= cfg.rsi_os and setup.low <= bb_lo[i_s]:
+                direction = "BUY"
+            elif rsi_v[i_s] >= cfg.rsi_ob and setup.high >= bb_up[i_s]:
+                direction = "SELL"
+        else:
+            confirm = candles[i_c]
+            if (rsi_v[i_s] <= cfg.rsi_os
+                    and setup.low <= bb_lo[i_s]
+                    and confirm.close > confirm.open):
+                direction = "BUY"
+            elif (rsi_v[i_s] >= cfg.rsi_ob
+                  and setup.high >= bb_up[i_s]
+                  and confirm.close < confirm.open):
+                direction = "SELL"
 
         if direction is None:
             continue
 
         if direction == "BUY":
-            entry = entry_c.open + cost
+            # タッチエントリー時はバンドレベルで即エントリー
+            entry = (bb_lo[i_s] + cost) if cfg.touch_entry else (entry_c.open + cost)
             sl    = bb_lo[i_s] - sl_buf
             tp    = bb_mid[i_s]
             sl_d  = entry - sl
             tp_d  = tp - entry
         else:
-            entry = entry_c.open - cost
+            entry = (bb_up[i_s] - cost) if cfg.touch_entry else (entry_c.open - cost)
             sl    = bb_up[i_s] + sl_buf
             tp    = bb_mid[i_s]
             sl_d  = sl - entry
@@ -866,6 +882,28 @@ def print_report(trades: list[dict], label: str = "") -> None:
             f"計 {sum(x['pips'] for x in ss):+.1f} pips"
         )
 
+    # 月次損益
+    monthly: dict[str, list] = {}
+    for t in trades:
+        ym = t["entry_time"][:7]  # "YYYY-MM"
+        monthly.setdefault(ym, []).append(t)
+
+    print(f"\n  【月次損益】")
+    print(f"    {'月':<8}  {'回数':>4}  {'勝率':>6}  {'pips':>8}")
+    print(f"    {'-' * 32}")
+    total_monthly = 0.0
+    for ym in sorted(monthly):
+        mt = monthly[ym]
+        mw = [x for x in mt if x["result"] == "TP"]
+        mp = sum(x["pips"] for x in mt)
+        total_monthly += mp
+        print(
+            f"    {ym}  {len(mt):>4}  "
+            f"{len(mw)/len(mt)*100:>5.1f}%  "
+            f"{mp:>+8.1f}"
+        )
+    print(f"    {'合計':<8}  {'':>4}  {'':>6}  {total_monthly:>+8.1f}")
+
 
 # ------------------------------------------------------------------
 # デフォルトグリッド設定（spec ver0.2）
@@ -917,6 +955,32 @@ def rsi_sweep_grid(spread_pips: float, adx_enter: float = 30.0) -> list[Backtest
     return configs
 
 
+def sl_sweep_grid(spread_pips: float, adx_enter: float = 30.0) -> list[BacktestConfig]:
+    """SL バッファ幅を刻んで最適値を探すグリッド（ADX<30, RSI35/65 固定）"""
+    kw = {"spread_pips": spread_pips, "adx_enter": adx_enter,
+          "rsi_os": 35.0, "rsi_ob": 65.0}
+    configs = []
+    for sl in [1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 15.0, 20.0]:
+        configs.append(BacktestConfig(
+            f"SL {sl:.0f}pips  (ADX<{adx_enter:.0f})",
+            sl_buf_pips=sl, **kw,
+        ))
+    return configs
+
+
+def sl_touch_grid(spread_pips: float, adx_enter: float = 30.0) -> list[BacktestConfig]:
+    """タッチエントリーモードで SL バッファ幅を刻むグリッド（確認足なし）"""
+    kw = {"spread_pips": spread_pips, "adx_enter": adx_enter,
+          "rsi_os": 35.0, "rsi_ob": 65.0, "touch_entry": True}
+    configs = []
+    for sl in [1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 15.0, 20.0]:
+        configs.append(BacktestConfig(
+            f"TOUCH SL {sl:.0f}pips  (ADX<{adx_enter:.0f})",
+            sl_buf_pips=sl, **kw,
+        ))
+    return configs
+
+
 # ------------------------------------------------------------------
 # 内部ヘルパー
 # ------------------------------------------------------------------
@@ -964,8 +1028,9 @@ def main() -> None:
     parser.add_argument("--no-cache", action="store_true")
     parser.add_argument("--strategy", default="bb", choices=["bb", "trend"],
                         help="戦略 (bb=BBレンジ逆張り / trend=MAパーフェクトオーダー順張り)")
-    parser.add_argument("--grid", default="default", choices=["default", "adx", "rsi", "best"],
-                        help="グリッド種別 (default=ver0.2 / adx=ADX / rsi=RSI / best=最適設定単一)")
+    parser.add_argument("--grid", default="default",
+                        choices=["default", "adx", "rsi", "best", "sl", "sl_touch"],
+                        help="グリッド種別 (default / adx / rsi / best / sl=SLスイープ / sl_touch=タッチエントリーSLスイープ)")
     parser.add_argument("--csv", action="store_true",
                         help="トレード明細を CSV で出力")
     parser.add_argument("--detail", action="store_true",
@@ -1034,6 +1099,10 @@ def main() -> None:
                 configs = rsi_sweep_grid(spread)
             elif args.grid == "best":
                 configs = best_config(spread)
+            elif args.grid == "sl":
+                configs = sl_sweep_grid(spread)
+            elif args.grid == "sl_touch":
+                configs = sl_touch_grid(spread)
             else:
                 configs = default_grid(spread)
             rows = run_grid(candles, pair, configs)
